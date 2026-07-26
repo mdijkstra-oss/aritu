@@ -70,7 +70,7 @@ func Holds(expect rule.Expectation, counts map[string]int, votes int) bool {
 	case rule.ExpectPass:
 		return vote.IsUnanimous(counts, votes)
 	case rule.ExpectFail:
-		return vote.IsRejected(counts)
+		return vote.IsUnanimous(counts, 0)
 	default:
 		panic(fmt.Sprintf("unknown expectation: %d", int(expect)))
 	}

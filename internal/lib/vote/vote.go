@@ -73,7 +73,4 @@ func IsUnanimous[K comparable](counts map[K]int, total int) bool {
 	return true
 }
 
-// IsRejected reports whether every count is zero.
-func IsRejected[K comparable](counts map[K]int) bool { return IsUnanimous(counts, 0) }
-
 var errNoRounds = errors.New("vote: rounds must be positive")

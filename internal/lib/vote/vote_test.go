@@ -226,93 +226,73 @@ func hasSameRounds(a, b []map[string]bool) bool {
 	return slices.EqualFunc(a, b, func(x, y map[string]bool) bool { return maps.Equal(x, y) })
 }
 
-var verdictCases = []struct {
-	name          string
-	counts        map[string]int
-	total         int
-	wantUnanimous bool
-	wantRejected  bool
-}{
-	{
-		name:          "a nil tally has nothing to fail",
-		counts:        nil,
-		total:         4,
-		wantUnanimous: true,
-		wantRejected:  true,
-	},
-	{
-		name:          "an empty tally has nothing to fail",
-		counts:        map[string]int{},
-		total:         4,
-		wantUnanimous: true,
-		wantRejected:  true,
-	},
-	{
-		name:          "every count at the total",
-		counts:        map[string]int{"TestA": 4, "TestB": 4},
-		total:         4,
-		wantUnanimous: true,
-		wantRejected:  false,
-	},
-	{
-		name:          "one count a single vote short of the total",
-		counts:        map[string]int{"TestA": 4, "TestB": 3},
-		total:         4,
-		wantUnanimous: false,
-		wantRejected:  false,
-	},
-	{
-		name:          "every count zero",
-		counts:        map[string]int{"TestA": 0, "TestB": 0},
-		total:         4,
-		wantUnanimous: false,
-		wantRejected:  true,
-	},
-	{
-		name:          "one count a single vote above zero",
-		counts:        map[string]int{"TestA": 0, "TestB": 1},
-		total:         4,
-		wantUnanimous: false,
-		wantRejected:  false,
-	},
-	{
-		name:          "a count above the total",
-		counts:        map[string]int{"TestA": 5},
-		total:         4,
-		wantUnanimous: false,
-		wantRejected:  false,
-	},
-	{
-		name:          "a single vote at the total",
-		counts:        map[string]int{"TestA": 1},
-		total:         1,
-		wantUnanimous: true,
-		wantRejected:  false,
-	},
-	{
-		name:          "zero votes leave every count at zero",
-		counts:        map[string]int{"TestA": 0},
-		total:         0,
-		wantUnanimous: true,
-		wantRejected:  true,
-	},
-}
-
 func TestIsUnanimous(t *testing.T) {
-	for _, tt := range verdictCases {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsUnanimous(tt.counts, tt.total); got != tt.wantUnanimous {
-				t.Errorf("IsUnanimous(%v, %d) = %t, want %t", tt.counts, tt.total, got, tt.wantUnanimous)
-			}
-		})
+	tests := []struct {
+		name   string
+		counts map[string]int
+		total  int
+		want   bool
+	}{
+		{
+			name:   "a nil tally is vacuously unanimous",
+			counts: nil,
+			total:  4,
+			want:   true,
+		},
+		{
+			name:   "an empty tally is vacuously unanimous",
+			counts: map[string]int{},
+			total:  4,
+			want:   true,
+		},
+		{
+			name:   "every count at the total is unanimous",
+			counts: map[string]int{"TestA": 4, "TestB": 4},
+			total:  4,
+			want:   true,
+		},
+		{
+			name:   "a single dissenting count is not unanimous",
+			counts: map[string]int{"TestA": 4, "TestB": 3},
+			total:  4,
+			want:   false,
+		},
+		{
+			name:   "every count at zero is not unanimous",
+			counts: map[string]int{"TestA": 0, "TestB": 0},
+			total:  4,
+			want:   false,
+		},
+		{
+			name:   "a single vote above zero is not unanimous",
+			counts: map[string]int{"TestA": 0, "TestB": 1},
+			total:  4,
+			want:   false,
+		},
+		{
+			name:   "a count above the total is not unanimous",
+			counts: map[string]int{"TestA": 5},
+			total:  4,
+			want:   false,
+		},
+		{
+			name:   "a single vote meeting the total is unanimous",
+			counts: map[string]int{"TestA": 1},
+			total:  1,
+			want:   true,
+		},
+		{
+			name:   "an all-zero tally is unanimous against a total of zero",
+			counts: map[string]int{"TestA": 0},
+			total:  0,
+			want:   true,
+		},
 	}
-}
 
-func TestIsRejected(t *testing.T) {
-	for _, tt := range verdictCases {
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsRejected(tt.counts); got != tt.wantRejected {
-				t.Errorf("IsRejected(%v) = %t, want %t", tt.counts, got, tt.wantRejected)
+			if got := IsUnanimous(tt.counts, tt.total); got != tt.want {
+				t.Errorf("IsUnanimous(%v, %d) = %t, want %t", tt.counts, tt.total, got, tt.want)
 			}
 		})
 	}
