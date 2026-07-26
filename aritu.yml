@@ -1,0 +1,5 @@
+votes: 1
+
+include:
+  - 'internal/**/*_test.go'
+  - 'cmd/**/*_test.go'
