@@ -92,6 +92,26 @@ func LoadBase(rulesDir string) (string, error) {
 	return base, nil
 }
 
+// List names every rule in the directory, sorted. Only directories count: base.md
+// is a file at the root and is the shared prompt, not a rule.
+func List(rulesDir string) ([]string, error) {
+	entries, err := os.ReadDir(rulesDir)
+	if err != nil {
+		return nil, fmt.Errorf("rules directory: %w", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("rules directory %s holds no rules", rulesDir)
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
 // LoadFixtures lists the rule's fixture directories, sorted by name.
 func LoadFixtures(r Rule) ([]Fixture, error) {
 	dir := filepath.Join(r.Dir, fixturesDirName)

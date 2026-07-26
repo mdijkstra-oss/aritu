@@ -65,26 +65,88 @@ const (
 // schemas exhaust the CLI's structured-output retries.
 const NamesSchema = `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"],"additionalProperties":false}`
 
-// Apply votes on one file against one rule. The returned Report carries Rule,
-// File and Votes even when the error is non-nil, so the caller can always emit
-// output before exiting.
+// Apply votes on one file against one rule. Everything the rule reads is read
+// before anything is asked, so a target the rule cannot see costs no model call.
+// The returned Report carries Rule, File and Votes even when the error is
+// non-nil, so the caller can always emit output before exiting.
 func Apply(ctx context.Context, ask claudecli.Ask, opts Options) (Report, error) {
 	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
-
 	if opts.Votes < 1 {
 		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
 	}
-
 	files, err := readFiles(opts.Rule, opts.File)
 	if err != nil {
 		return report, err
 	}
-
-	names, err := listUnits(ctx, ask, opts, files[0])
+	leaves, err := leavesFor(ctx, ask, opts)
 	if err != nil {
 		return report, err
 	}
-	units := UnitsFor(names)
+	return voteOn(ctx, ask, opts, files, UnitsAt(opts.Rule.Granularity, opts.File, leaves))
+}
+
+// Enumerate lists a file's leaves, always at test granularity. It is deliberately
+// independent of the rule: the enumeration prompt is built from the granularity and
+// the file alone, so every rule over one file would otherwise ask the same question
+// and pay for the same answer. Coarser levels roll up from this with UnitsAt.
+func Enumerate(ctx context.Context, ask claudecli.Ask, opts Options) ([]string, error) {
+	test, err := readSourceFile(opts.File)
+	if err != nil {
+		return nil, err
+	}
+	enumerating := opts
+	enumerating.Rule.Granularity = rule.GranularityTest
+	return askNames(ctx, ask, enumerating, test)
+}
+
+// NeedsEnumeration reports whether the model has to list a rule's units at all.
+// At file granularity the unit is the path, which costs no tokens to know and
+// cannot be disagreed with, so no enumeration is asked for.
+func NeedsEnumeration(granularity rule.Granularity) bool {
+	return granularity != rule.GranularityFile
+}
+
+// UnitsAt narrows a file's leaves to the units one rule judges. A function that
+// declares no cases appears in the leaf list as its bare name and one that declares
+// cases appears once per case, so the distinct function halves are exactly the set
+// of test functions — the roll-up is a string split rather than a second question.
+func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit {
+	switch granularity {
+	case rule.GranularityFile:
+		return UnitsFor([]string{file})
+	case rule.GranularityFunction:
+		return UnitsFor(distinctFunctions(leaves))
+	case rule.GranularityTest:
+		return UnitsFor(leaves)
+	default:
+		panic(fmt.Sprintf("unknown granularity: %d", int(granularity)))
+	}
+}
+
+// Judge votes on units already enumerated. The returned Report carries Rule, File
+// and Votes even when the error is non-nil, so the caller can always emit output
+// before exiting.
+func Judge(ctx context.Context, ask claudecli.Ask, opts Options, units []Unit) (Report, error) {
+	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
+	if opts.Votes < 1 {
+		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
+	}
+	files, err := readFiles(opts.Rule, opts.File)
+	if err != nil {
+		return report, err
+	}
+	return voteOn(ctx, ask, opts, files, units)
+}
+
+func leavesFor(ctx context.Context, ask claudecli.Ask, opts Options) ([]string, error) {
+	if !NeedsEnumeration(opts.Rule.Granularity) {
+		return nil, nil
+	}
+	return Enumerate(ctx, ask, opts)
+}
+
+func voteOn(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []Unit) (Report, error) {
+	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
 
 	judge := func(ctx context.Context, _ int) (round, error) {
 		return askVerdicts(ctx, ask, opts, files, units)
@@ -97,6 +159,20 @@ func Apply(ctx context.Context, ask claudecli.Ask, opts Options) (Report, error)
 	report.Verdicts = vote.Tally(verdictsOf(rounds))
 	report.Reasons = collectReasons(rounds, report.Verdicts, opts.Votes)
 	return report, nil
+}
+
+func distinctFunctions(leaves []string) []string {
+	functions := make([]string, 0, len(leaves))
+	seen := make(map[string]bool, len(leaves))
+	for _, leaf := range leaves {
+		function, _, _ := splitUnit(leaf)
+		if seen[function] {
+			continue
+		}
+		seen[function] = true
+		functions = append(functions, function)
+	}
+	return functions
 }
 
 // ExitFor derives the exit status of a completed report.
@@ -244,16 +320,6 @@ func askNames(ctx context.Context, ask claudecli.Ask, opts Options, test SourceF
 		return nil, fmt.Errorf("test unit %q listed more than once in %s", duplicate, test.Path)
 	}
 	return reply.Names, nil
-}
-
-// listUnits enumerates what this rule judges. At file granularity there is
-// nothing to enumerate, so the call is skipped: the unit is the path, which
-// costs no tokens to know and cannot be disagreed with.
-func listUnits(ctx context.Context, ask claudecli.Ask, opts Options, test SourceFile) ([]string, error) {
-	if opts.Rule.Granularity == rule.GranularityFile {
-		return []string{opts.File}, nil
-	}
-	return askNames(ctx, ask, opts, test)
 }
 
 func askVerdicts(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {

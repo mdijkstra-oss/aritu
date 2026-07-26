@@ -4,126 +4,394 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/alecthomas/kong"
+
+	"github.com/matthijn/aritu/internal/domain/config"
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
+	"github.com/matthijn/aritu/internal/domain/run"
 	"github.com/matthijn/aritu/internal/domain/selftest"
 	"github.com/matthijn/aritu/internal/lib/claudecli"
-)
-
-const (
-	defaultModel    = "sonnet"
-	defaultVotes    = 1
-	defaultEffort   = "medium"
-	defaultRulesDir = "./rules"
-	defaultClaude   = "claude"
-	defaultTimeout  = 10 * time.Minute
-	defaultJobs     = 5
-	defaultOutput   = "pretty"
+	"github.com/matthijn/aritu/internal/lib/glob"
 )
 
 func main() {
-	os.Exit(int(run(os.Args[1:], os.Stdout, os.Stderr)))
+	os.Exit(int(execute(os.Args[1:], os.Stdout, os.Stderr)))
 }
 
-func run(args []string, stdout, stderr io.Writer) lint.Exit {
-	commands := map[string]func(args []string) lint.Exit{
-		"apply":    func(rest []string) lint.Exit { return runApply(rest, stdout, stderr) },
-		"selftest": func(rest []string) lint.Exit { return runSelftest(rest, stdout, stderr) },
-	}
-	if len(args) == 0 {
-		fmt.Fprint(stderr, "aritu: no command given\n\n")
-		writeUsage(stderr)
-		return lint.ExitError
-	}
-	command, isKnown := commands[args[0]]
-	if !isKnown {
-		fmt.Fprintf(stderr, "aritu: unknown command %q\n\n", args[0])
-		writeUsage(stderr)
-		return lint.ExitError
-	}
-	return command(args[1:])
+// CLI is the whole command line. Every flag sits at the root because a repository
+// has one answer to which model and how many votes, and aritu.yml answers them
+// once for both commands rather than once per subcommand.
+type CLI struct {
+	Config   string        `help:"Config file to use instead of searching upward for aritu.yml." placeholder:"PATH"`
+	Rule     []string      `help:"Rule to run; repeat for several. Every rule in the rules directory when omitted." placeholder:"NAME" sep:"none"`
+	Model    string        `help:"Model name passed to the claude CLI." default:"${model}"`
+	Effort   string        `help:"Reasoning effort: low, medium, high, xhigh or max. Empty leaves the CLI default." default:"${effort}"`
+	Votes    int           `help:"Rounds that must all agree before a unit passes." default:"${votes}"`
+	Jobs     int           `help:"Model calls allowed in flight at once." default:"${jobs}"`
+	Output   string        `help:"How to render the report: pretty or json." default:"${output}"`
+	Rules    string        `help:"Directory holding base.md and one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
+	Claude   string        `help:"claude CLI binary to invoke." default:"${claude}"`
+	Timeout  time.Duration `help:"Deadline for the whole run, so a hung CLI cannot hang a commit hook." default:"${timeout}"`
+	Apply    ApplyCmd      `cmd:"" help:"Judge files against rules."`
+	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
+
+	// Loaded is aritu.yml as read during the parse. Its include patterns and its
+	// enabled rules answer no flag, so no resolver can carry them out of the parse.
+	Loaded config.Config `kong:"-"`
 }
 
-func runApply(args []string, stdout, stderr io.Writer) lint.Exit {
-	opts, err := parseOptions("apply", args, 2)
+// ApplyCmd judges files against rules. The patterns are the selector, so aritu
+// holds no opinion about what a test file is: everything they match is judged.
+type ApplyCmd struct {
+	Patterns []string `arg:"" optional:"" name:"pattern" help:"File or glob to judge; repeat for several. The include list from aritu.yml when omitted."`
+}
+
+// SelftestCmd runs every named rule against its own fixtures.
+type SelftestCmd struct{}
+
+const description = `An LLM linter for Go tests.
+
+Point it at files and every rule in the rules directory judges them, reported
+once, grouped by file.`
+
+const exitCodes = `Exit codes:
+
+    0  every unit of every rule over every file unanimously satisfied its rule
+    1  one or more did not
+    2  one or more targets could not be run, which outranks 1`
+
+// defaults are the bottom layer of the precedence stack: flags override
+// aritu.yml, which overrides these.
+var defaults = kong.Vars{
+	"model":   "sonnet",
+	"effort":  "medium",
+	"votes":   "1",
+	"jobs":    "5",
+	"output":  "pretty",
+	"rules":   "./rules",
+	"claude":  "claude",
+	"timeout": "10m",
+}
+
+// BeforeResolve layers aritu.yml under the flags. kong resolves --config during
+// the parse, so the file cannot be read before the parser exists, and a resolver
+// is the only place its values can arrive without being mistaken for flags
+// somebody typed: a flag holding its default is otherwise indistinguishable from
+// a flag nobody gave.
+func (c *CLI) BeforeResolve(kctx *kong.Context) error {
+	path, isFound, err := configPathFor(flagValue(kctx, "config"))
+	if err != nil || !isFound {
+		return err
+	}
+	loaded, err := config.Load(path)
 	if err != nil {
-		return usageError(stderr, "apply", err)
+		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
-	defer cancel()
+	c.Loaded = loaded
+	kctx.AddResolver(resolverFor(loaded))
+	return nil
+}
 
-	report, applyErr := applyReport(ctx, opts, opts.args[0], opts.args[1])
-	if err := writeReport(stdout, opts.output, report); err != nil {
+// Help is the exit-code table, generated into the command's help from the same
+// place the codes are decided rather than maintained beside it.
+func (ApplyCmd) Help() string { return exitCodes }
+
+// Help is the exit-code table, generated into the command's help from the same
+// place the codes are decided rather than maintained beside it.
+func (SelftestCmd) Help() string { return exitCodes }
+
+// execute is main's body with the writers passed in, so a whole invocation can be
+// driven against buffers rather than the process's own streams.
+func execute(args []string, stdout, stderr io.Writer) lint.Exit {
+	var cli CLI
+	hasPrintedHelp := false
+	parser := newParser(&cli, stdout, stderr, func(int) { hasPrintedHelp = true })
+
+	kctx, err := parser.Parse(args)
+	if hasPrintedHelp {
+		return lint.ExitPass
+	}
+	if err != nil {
+		return reportUsage(parser, stderr, err)
+	}
+	if err := validate(cli); err != nil {
+		fmt.Fprintf(stderr, "aritu: %v\n", err)
+		return lint.ExitError
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), cli.Timeout)
+	defer cancel()
+	return commandFor(kctx.Selected().Name)(ctx, &cli, stdout, stderr)
+}
+
+// newParser builds the grammar. Exit is replaced because kong's help flag ends
+// the process on its own, and this one has to report an exit code instead.
+func newParser(cli *CLI, stdout, stderr io.Writer, exit func(int)) *kong.Kong {
+	return kong.Must(cli,
+		kong.Name("aritu"),
+		kong.Description(description),
+		kong.Writers(stdout, stderr),
+		kong.Exit(exit),
+		defaults,
+	)
+}
+
+// reportUsage prints kong's diagnosis and the usage that goes with it. Both go to
+// stderr — the parser's help writer is redirected for exactly this — so a run
+// whose output is being parsed never finds a usage dump through the middle of it.
+func reportUsage(parser *kong.Kong, stderr io.Writer, err error) lint.Exit {
+	fmt.Fprintf(stderr, "aritu: %v\n\n", err)
+	var parseErr *kong.ParseError
+	if errors.As(err, &parseErr) {
+		parser.Stdout = stderr
+		_ = parseErr.Context.PrintUsage(true)
+	}
+	return lint.ExitError
+}
+
+// validate runs once, on the resolved result. Validating each source separately
+// is how a config file ends up accepting what the flag rejects.
+func validate(cli CLI) error {
+	if cli.Votes < 1 {
+		return fmt.Errorf("votes must be at least 1, got %d", cli.Votes)
+	}
+	if _, isKnown := outputWriters[cli.Output]; !isKnown {
+		return fmt.Errorf("unknown output %q, want pretty or json", cli.Output)
+	}
+	if !isKnownEffort(cli.Effort) {
+		return fmt.Errorf("unknown effort %q, want one of %s, or empty for the CLI default", cli.Effort, strings.Join(efforts, ", "))
+	}
+	return nil
+}
+
+// efforts are the levels the claude CLI accepts.
+var efforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+func isKnownEffort(effort string) bool {
+	return effort == "" || slices.Contains(efforts, effort)
+}
+
+// command is one subcommand's body. Both take the writers rather than reaching
+// for the process streams, so a whole command can be exercised against buffers.
+type command func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit
+
+var commands = map[string]command{
+	"apply":    runApply,
+	"selftest": runSelftest,
+}
+
+func commandFor(name string) command {
+	selected, isKnown := commands[name]
+	if !isKnown {
+		panic(fmt.Sprintf("kong selected a command with no body: %s", name))
+	}
+	return selected
+}
+
+// runApply sweeps every rule over every target. The report is written before the
+// exit code is decided, including when the sweep could not start: a caller told
+// nothing at all cannot tell an empty run from a clean one.
+func runApply(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+	started := time.Now()
+	opts, setupErr := applyOptions(cli)
+
+	var results []run.Result
+	if setupErr == nil {
+		results = run.Run(ctx, askFor(cli), opts)
+	}
+	if err := writeResults(stdout, cli.Output, sweep{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
 		fmt.Fprintf(stderr, "aritu apply: %v\n", err)
 		return lint.ExitError
 	}
-	if applyErr != nil {
+	if setupErr != nil {
+		fmt.Fprintf(stderr, "aritu apply: %v\n", setupErr)
 		return lint.ExitError
 	}
-	return lint.ExitFor(report)
+	return run.ExitFor(results)
 }
 
-func applyReport(ctx context.Context, opts options, ruleName, file string) (lint.Report, error) {
-	pending := lint.Report{Rule: ruleName, File: file, Votes: opts.votes}
-	r, err := rule.Load(opts.rulesDir, ruleName)
+// applyOptions resolves everything the sweep needs before the first model call,
+// so a missing rule or a pattern matching nothing costs nothing to discover.
+func applyOptions(cli *CLI) (run.Options, error) {
+	opts := run.Options{Votes: cli.Votes, Model: cli.Model, Effort: cli.Effort}
+
+	files, err := targetsFor(cli.Apply.Patterns, cli.Loaded.Include)
 	if err != nil {
-		return withError(pending, err), err
+		return opts, err
 	}
-	base, err := rule.LoadBase(opts.rulesDir)
+	opts.Files = files
+
+	rules, err := rulesFor(cli)
 	if err != nil {
-		return withError(pending, err), err
+		return opts, err
 	}
-	report, err := lint.Apply(ctx, askFor(opts), lint.Options{
-		Rule:   r,
-		Base:   base,
-		File:   file,
-		Votes:  opts.votes,
-		Model:  opts.model,
-		Effort: opts.effort,
-	})
+	opts.Rules = rules
+
+	base, err := rule.LoadBase(cli.Rules)
 	if err != nil {
-		return withError(report, err), err
+		return opts, err
 	}
-	return report, nil
+	opts.Base = base
+	return opts, nil
+}
+
+// targetsFor expands the patterns given on the command line, falling back to the
+// include list aritu.yml supplies. Neither is an error rather than an empty
+// sweep: a run over no files reporting green is how a hook passes because its
+// path was wrong.
+func targetsFor(patterns, include []string) ([]string, error) {
+	selected := patterns
+	if len(selected) == 0 {
+		selected = include
+	}
+	if len(selected) == 0 {
+		return nil, errors.New("no targets: name a file or glob pattern, or set include in aritu.yml")
+	}
+	return glob.Expand(selected)
+}
+
+// runSelftest runs each named rule against its own fixtures, one table per rule.
+// A rule that cannot be loaded still prints its table, because the table is the
+// diagnostic and an empty one says which rule produced nothing.
+func runSelftest(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+	names, err := ruleNamesFor(cli)
+	if err != nil {
+		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
+		return lint.ExitError
+	}
+
+	ask := askFor(cli)
+	exit := lint.ExitPass
+	for _, name := range names {
+		exit = worse(exit, selftestRule(ctx, ask, cli, name, stdout, stderr))
+	}
+	return exit
+}
+
+func selftestRule(ctx context.Context, ask claudecli.Ask, cli *CLI, name string, stdout, stderr io.Writer) lint.Exit {
+	started := time.Now()
+	opts, results, runErr := selftestResults(ctx, ask, cli, name)
+
+	if err := selftest.Format(stdout, opts, results, time.Since(started)); err != nil {
+		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
+		return lint.ExitError
+	}
+	if runErr != nil {
+		fmt.Fprintf(stderr, "aritu selftest: %v\n", runErr)
+		return lint.ExitError
+	}
+	return selftest.ExitFor(results)
+}
+
+func selftestResults(ctx context.Context, ask claudecli.Ask, cli *CLI, name string) (selftest.Options, []selftest.Result, error) {
+	opts := selftest.Options{
+		Rule:   rule.Rule{Name: name},
+		Votes:  cli.Votes,
+		Model:  cli.Model,
+		Effort: cli.Effort,
+	}
+	loaded, err := rule.Load(cli.Rules, name)
+	if err != nil {
+		return opts, nil, err
+	}
+	opts.Rule = loaded
+
+	base, err := rule.LoadBase(cli.Rules)
+	if err != nil {
+		return opts, nil, err
+	}
+	opts.Base = base
+
+	fixtures, err := rule.LoadFixtures(loaded)
+	if err != nil {
+		return opts, nil, err
+	}
+	return opts, selftest.Run(ctx, ask, opts, fixtures), nil
+}
+
+// worse ranks could-not-run above a rule failure, so a sweep where one rule could
+// not be run is never reported as an ordinary miss.
+func worse(a, b lint.Exit) lint.Exit {
+	return max(a, b)
+}
+
+// rulesFor loads the rules to run. Naming none runs every rule the directory
+// holds, in name order, and a name that resolves to nothing is an error naming it
+// rather than a silent skip.
+func rulesFor(cli *CLI) ([]rule.Rule, error) {
+	names, err := ruleNamesFor(cli)
+	if err != nil {
+		return nil, err
+	}
+	rules := make([]rule.Rule, 0, len(names))
+	for _, name := range names {
+		loaded, err := rule.Load(cli.Rules, name)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, loaded)
+	}
+	return rules, nil
+}
+
+// ruleNamesFor layers the rule selection the same way the flags are layered:
+// what was named on the command line, else what aritu.yml enabled, else all of
+// them. It is not a flag kong can resolve, because a list of rule names is not
+// one of the file's flag-shaped keys.
+func ruleNamesFor(cli *CLI) ([]string, error) {
+	if len(cli.Rule) > 0 {
+		return cli.Rule, nil
+	}
+	if enabled := cli.Loaded.Rules.Enabled; len(enabled) > 0 {
+		return enabled, nil
+	}
+	return rule.List(cli.Rules)
 }
 
 // askFor bounds concurrency at the seam every model call passes through, so
-// fixture-level and vote-level parallelism cannot multiply into a process storm.
-func askFor(opts options) claudecli.Ask {
-	return claudecli.Throttle(claudecli.Exec(opts.claude), opts.jobs)
+// file-level, rule-level and vote-level parallelism cannot multiply into a
+// process storm. One ask serves a whole run; a second would be a second ceiling.
+func askFor(cli *CLI) claudecli.Ask {
+	return claudecli.Throttle(claudecli.Exec(cli.Claude), cli.Jobs)
 }
 
-func withError(r lint.Report, err error) lint.Report {
-	r.Error = err.Error()
-	if r.Verdicts == nil {
-		r.Verdicts = map[string]int{}
-	}
-	return r
+// sweep is everything a reporter needs. Both reporters take it so the choice of
+// one stays a table lookup rather than a branch.
+type sweep struct {
+	Results []run.Result
+	Options run.Options
+	Elapsed time.Duration
 }
 
-var reportWriters = map[string]func(io.Writer, lint.Report) error{
-	"pretty": func(w io.Writer, r lint.Report) error { return lint.Format(w, r, wantsColour(w)) },
-	"json":   writeReportJSON,
+var outputWriters = map[string]func(io.Writer, sweep) error{
+	"pretty": writeSweepPretty,
+	"json":   writeSweepJSON,
 }
 
-func writeReport(w io.Writer, format string, r lint.Report) error {
-	write, isKnown := reportWriters[format]
+func writeResults(w io.Writer, format string, s sweep) error {
+	write, isKnown := outputWriters[format]
 	if !isKnown {
-		return fmt.Errorf("unknown output %q, want pretty or json", format)
+		panic(fmt.Sprintf("output %q reached the reporter without being validated", format))
 	}
-	return write(w, r)
+	return write(w, s)
 }
 
-func writeReportJSON(w io.Writer, r lint.Report) error {
-	encoded, err := json.MarshalIndent(r, "", "  ")
+func writeSweepPretty(w io.Writer, s sweep) error {
+	return run.Format(w, s.Results, s.Options, s.Elapsed, wantsColour(w))
+}
+
+func writeSweepJSON(w io.Writer, s sweep) error {
+	encoded, err := json.MarshalIndent(run.EnvelopeOf(s.Results), "", "  ")
 	if err != nil {
-		return err
+		panic(fmt.Sprintf("the report envelope failed to marshal, which its types make impossible: %v", err))
 	}
 	_, err = fmt.Fprintf(w, "%s\n", encoded)
 	return err
@@ -144,145 +412,48 @@ func wantsColour(w io.Writer) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func runSelftest(args []string, stdout, stderr io.Writer) lint.Exit {
-	opts, err := parseOptions("selftest", args, 1)
+// configPathFor honours an explicit --config over the upward search entirely, so
+// a file named on the command line is the only one consulted. Finding none is not
+// an error: a repository without an aritu.yml runs on the built-in defaults.
+func configPathFor(explicit string) (path string, isFound bool, err error) {
+	if explicit != "" {
+		return explicit, true, nil
+	}
+	dir, err := os.Getwd()
 	if err != nil {
-		return usageError(stderr, "selftest", err)
+		return "", false, fmt.Errorf("config search: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
-	defer cancel()
-
-	started := time.Now()
-	selftestOpts, results, runErr := selftestResults(ctx, opts, opts.args[0])
-	if err := selftest.Format(stdout, selftestOpts, results, time.Since(started)); err != nil {
-		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
-		return lint.ExitError
-	}
-	if runErr != nil {
-		fmt.Fprintf(stderr, "aritu selftest: %v\n", runErr)
-		return lint.ExitError
-	}
-	return selftest.ExitFor(results)
+	return config.Find(dir)
 }
 
-func selftestResults(ctx context.Context, opts options, ruleName string) (selftest.Options, []selftest.Result, error) {
-	selftestOpts := selftest.Options{
-		Rule:   rule.Rule{Name: ruleName},
-		Votes:  opts.votes,
-		Model:  opts.model,
-		Effort: opts.effort,
-	}
-	r, err := rule.Load(opts.rulesDir, ruleName)
-	if err != nil {
-		return selftestOpts, nil, err
-	}
-	selftestOpts.Rule = r
-
-	base, err := rule.LoadBase(opts.rulesDir)
-	if err != nil {
-		return selftestOpts, nil, err
-	}
-	selftestOpts.Base = base
-
-	fixtures, err := rule.LoadFixtures(r)
-	if err != nil {
-		return selftestOpts, nil, err
-	}
-	return selftestOpts, selftest.Run(ctx, askFor(opts), selftestOpts, fixtures), nil
-}
-
-type options struct {
-	model    string
-	output   string
-	votes    int
-	jobs     int
-	effort   string
-	rulesDir string
-	claude   string
-	timeout  time.Duration
-	args     []string
-}
-
-func parseOptions(command string, args []string, positionals int) (options, error) {
-	var opts options
-	fs := flag.NewFlagSet(command, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	registerFlags(fs, &opts)
-
-	parsed, err := parseInterspersed(fs, args)
-	if err != nil {
-		return options{}, err
-	}
-	if len(parsed) != positionals {
-		return options{}, fmt.Errorf("expected %d positional argument(s), got %d", positionals, len(parsed))
-	}
-	if _, isKnown := reportWriters[opts.output]; !isKnown {
-		return options{}, fmt.Errorf("unknown output %q, want pretty or json", opts.output)
-	}
-	if opts.votes < 1 {
-		return options{}, fmt.Errorf("votes must be at least 1, got %d", opts.votes)
-	}
-	opts.args = parsed
-	return opts, nil
-}
-
-// parseInterspersed collects positionals from anywhere in args, because the
-// documented invocation puts flags after them and flag.Parse stops at the first
-// non-flag argument.
-func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
-	var positionals []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
+func resolverFor(loaded config.Config) kong.ResolverFunc {
+	return func(_ *kong.Context, _ *kong.Path, flag *kong.Flag) (any, error) {
+		value, isSet := loaded.Lookup(flag.Name)
+		if !isSet {
+			return nil, nil
 		}
-		if fs.NArg() == 0 {
-			return positionals, nil
+		return mappable(value), nil
+	}
+}
+
+// mappable adapts a config value to what kong's mappers accept. The duration
+// mapper switches on concrete types and time.Duration is not among them, so a
+// duration crosses as the nanosecond count it already is.
+func mappable(value any) any {
+	if duration, isDuration := value.(time.Duration); isDuration {
+		return int64(duration)
+	}
+	return value
+}
+
+// flagValue reads a flag straight off the parse. During BeforeResolve the values
+// have not been applied to the grammar struct yet, which is the whole point:
+// aritu.yml has to be loaded before anything resolves against it.
+func flagValue(kctx *kong.Context, name string) string {
+	for _, flag := range kctx.Flags() {
+		if flag.Name == name {
+			return fmt.Sprint(kctx.FlagValue(flag))
 		}
-		positionals = append(positionals, fs.Arg(0))
-		args = fs.Args()[1:]
 	}
-}
-
-func registerFlags(fs *flag.FlagSet, opts *options) {
-	fs.StringVar(&opts.model, "model", defaultModel, "model name passed to the claude CLI")
-	fs.IntVar(&opts.votes, "votes", defaultVotes, "rounds that must all agree before a test passes")
-	fs.IntVar(&opts.jobs, "jobs", defaultJobs, "model calls allowed in flight at once")
-	fs.StringVar(&opts.output, "output", defaultOutput, "how to render the report: pretty or json")
-	fs.StringVar(&opts.effort, "effort", defaultEffort, "reasoning effort; empty leaves the CLI default")
-	fs.StringVar(&opts.rulesDir, "rules", defaultRulesDir, "directory holding one subdirectory per rule")
-	fs.StringVar(&opts.claude, "claude", defaultClaude, "claude CLI binary to invoke")
-	fs.DurationVar(&opts.timeout, "timeout", defaultTimeout, "deadline for the whole run, so a hung CLI cannot hang a commit hook")
-}
-
-const usageHeader = `aritu - an LLM linter for Go tests.
-
-usage:
-  aritu apply    <rule> <file>  [flags]
-  aritu selftest <rule>         [flags]
-
-flags:
-`
-
-const usageFooter = `
-exit codes:
-  0  every test function unanimously satisfies the rule
-  1  one or more do not, whether the votes were unanimously against or split
-  2  could not run
-`
-
-func usageError(stderr io.Writer, command string, err error) lint.Exit {
-	if !errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintf(stderr, "aritu %s: %v\n\n", command, err)
-	}
-	writeUsage(stderr)
-	return lint.ExitError
-}
-
-func writeUsage(w io.Writer) {
-	fmt.Fprint(w, usageHeader)
-	fs := flag.NewFlagSet("aritu", flag.ContinueOnError)
-	fs.SetOutput(w)
-	registerFlags(fs, &options{})
-	fs.PrintDefaults()
-	fmt.Fprint(w, usageFooter)
+	return ""
 }

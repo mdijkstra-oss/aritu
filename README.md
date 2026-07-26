@@ -18,62 +18,75 @@ go build -o aritu ./cmd/aritu
 
 Requires Go 1.25+ and the `claude` CLI on `PATH`, already authenticated.
 
+`aritu --help` lists everything; it is generated from the flags rather than written
+beside them, so it cannot drift.
+
 ## Use
 
 ```sh
-# judge one file against one rule
-aritu apply one-reason-to-fail internal/parser/parser_test.go
+# every rule over one file
+aritu apply internal/parser/parser_test.go
 
-# run a rule against its whole fixture corpus and check each result
-# against the expectation its directory name carries
-aritu selftest one-reason-to-fail --votes 4
+# every rule over everything a pattern matches
+aritu apply 'internal/**/*_test.go'
+
+# one rule, several patterns
+aritu apply --rule named-for-behavior 'internal/**/*_test.go' 'cmd/**/*_test.go'
+
+# check the rules themselves against their own fixtures
+aritu selftest --votes 4
 ```
 
-`apply` prints a report:
+Patterns are globs, including `**` across directories. aritu expands them itself,
+so a quoted pattern and one your shell already expanded reach the same set — the
+run does not change because you moved it from zsh to bash. A pattern matching
+nothing is an error rather than a quiet success, and overlapping patterns judge a
+file once.
+
+Omit `--rule` and every rule in the rules directory runs; repeat it to pick a few.
+
+`apply` prints a report grouped by file, then by rule:
 
 ```
-named-for-behavior  internal/parser/parser_test.go
-
-  TestParseConfig
-    ✓ extracts host before colon
-    ! rejects blank input (1 of 2)
+internal/parser/parser_test.go
+  named-for-behavior
+    ✓ TestParseConfig (extracts host before colon)
+    ! TestParseConfig (rejects blank input) (1 of 2)
       one run read the name as stating an outcome and one did not
-    ✗ host and port
+    ✗ TestParseConfig (host and port)
       names the input the case supplies rather than the outcome it protects
+  one-reason-to-fail
+    ✓ TestParseConfig
 
-  ✓ TestSlugify
-
-  2 passed  ·  2 failed  ·  1 split  ·  4 units, 2 votes
+  2 passed  ·  2 failed  ·  1 split  ·  1 file, 2 rules, 2 votes  ·  4.1s
 ```
 
-Units group under the function that declares them. `✓` is unanimous agreement that
-the unit satisfies the rule, `✗` unanimous agreement that it does not, and `!` a
-split — the only outcome where the count is shown, because that is the case where
-the number says something the mark cannot.
+`✓` is unanimous agreement that the unit satisfies the rule, `✗` unanimous
+agreement that it does not, and `!` a split — the only outcome where the count is
+shown, because that is the case where the number says something the mark cannot.
 
 Colour goes to a terminal and nowhere else: a pipe, a redirect or `NO_COLOR` all
 get plain text, so what you capture is what you read.
 
-`--output json` gives the same report as data:
+`--output json` gives the same run as data:
 
 ```json
 {
-  "rule": "named-for-behavior",
-  "file": "internal/parser/parser_test.go",
-  "votes": 2,
-  "verdicts": {
-    "TestParseConfig (extracts host before colon)": 2,
-    "TestParseConfig (host and port)": 0
-  },
-  "reasons": {
-    "TestParseConfig (host and port)": [
-      "names the input the case supplies rather than the outcome it protects"
-    ]
-  }
+  "reports": [
+    {
+      "rule": "named-for-behavior",
+      "file": "internal/parser/parser_test.go",
+      "votes": 2,
+      "verdicts": { "TestParseConfig (host and port)": 0 },
+      "reasons": {
+        "TestParseConfig (host and port)": ["names the input the case supplies rather than the outcome it protects"]
+      }
+    }
+  ]
 }
 ```
 
-Each value is how many of the `votes` runs judged that unit to satisfy the rule.
+Each verdict is how many of the `votes` runs judged that unit to satisfy the rule.
 **A unit passes only at full agreement.** Every other count is a failure — `0` and
 `3` of `4` alike.
 
@@ -88,9 +101,13 @@ unanimous pass has nothing to explain, so it is omitted.
 
 | code | meaning |
 |---|---|
-| `0` | every unit unanimously satisfies the rule |
+| `0` | every unit of every rule over every file unanimously satisfies its rule |
 | `1` | one or more do not, whether the votes were unanimously against or split |
-| `2` | could not run — model unreachable, file not found, bad response, name/verdict mismatch |
+| `2` | one or more targets could not be run, which outranks `1` |
+
+`2` outranking `1` matters: a run where one file was unreadable and another
+genuinely failed did not check everything, and reporting that as an ordinary rule
+failure would let a hook treat a partial sweep as a complete one.
 
 A split vote is not a third outcome and never becomes `2`. The rule is "all votes
 agree"; a split does not meet it, so it fails. Filing it under "could not run"
@@ -99,6 +116,37 @@ exactly the test aritu exists to catch.
 
 Output is always written before exiting, including on `2`. The counts are the whole
 diagnostic; suppressing them on failure removes the reason to have them.
+
+## Configuration
+
+Optional. `aritu.yml` at the repository root, every key optional:
+
+```yaml
+model: sonnet
+effort: medium
+votes: 2
+jobs: 5
+timeout: 10m
+output: pretty
+
+rules:
+  dir: ./rules
+  enabled: [named-for-behavior, one-reason-to-fail]   # omit for all
+
+include:
+  - 'internal/**/*_test.go'
+```
+
+`include` supplies the targets for a bare `aritu apply`. Precedence is built-in
+defaults, then the file, then flags — so `--votes 2` beats `votes: 4` in the file.
+
+aritu searches upward from the working directory, so running from a subdirectory
+behaves the same as running from the root, and `--config` points somewhere else
+entirely. Paths inside the file resolve against the file; patterns you type
+resolve against your shell. Each resolves in the frame it was written in.
+
+An unknown key is an error naming it. A setting that silently does nothing is
+worse than one that refuses to load.
 
 ## Rules
 
@@ -208,26 +256,36 @@ from missing.
 
 ## How it calls the model
 
-Two calls per file, both through the `claude` CLI via `exec`, with tools disabled
-and a replaced system prompt. The first enumerates the units at the rule's declared
-granularity; the second judges them, and is handed that list explicitly rather than
-left to re-derive it.
+Two kinds of call, both through the `claude` CLI via `exec`, with tools disabled
+and a replaced system prompt.
 
-If the second returns a unit the first did not list, or drops one it did, that is an
+The first enumerates the units in a file. It depends on the file and nothing else —
+the rule's text never reaches it — so **a file is enumerated once however many
+rules judge it**, and the coarser levels roll up from that one list. Running three
+rules over nine files makes nine enumeration calls, not twenty-seven.
+
+The second judges those units against one rule, and is handed the enumerated list
+explicitly rather than left to re-derive it. Its schema is generated per call with
+every unit named as a required key, so a duplicated, dropped or invented unit is
+rejected by the schema and retried by the CLI rather than becoming aritu's problem.
+
+If a verdict still arrives naming a unit the enumeration did not list, that is an
 error and exit `2` — never a silent merge. Models are unreliable at exhaustive
 enumeration, and a quietly dropped test is the precise failure this tool exists to
 catch.
 
-At `file` granularity the first call is skipped entirely: the unit is the path, which
-costs nothing to know and cannot be disagreed with.
+At `file` granularity the first call is skipped entirely: the unit is the path,
+which costs nothing to know and cannot be disagreed with.
 
 ## Flags
 
 | flag | default | |
 |---|---|---|
+| `--rule` | all | rule to run; repeat for several |
+| `--config` | search upward | config file to use instead of `aritu.yml` discovery |
 | `--model` | `sonnet` | model passed to the claude CLI |
 | `--output` | `pretty` | `pretty` for reading, `json` for parsing |
-| `--votes` | `2` | rounds that must all agree before a unit passes |
+| `--votes` | `1` | rounds that must all agree before a unit passes |
 | `--jobs` | `5` | model calls allowed in flight at once |
 | `--effort` | — | reasoning effort; empty leaves the CLI default |
 | `--rules` | `./rules` | directory holding `base.md` and one subdirectory per rule |
