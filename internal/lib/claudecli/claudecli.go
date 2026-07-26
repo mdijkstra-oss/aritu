@@ -46,6 +46,26 @@ func Exec(binary string) Ask {
 	}
 }
 
+// Throttle bounds how many calls may be in flight at once. Fixture-level and
+// vote-level concurrency multiply, so a ceiling at this seam is the only one that
+// holds however the callers above it nest their goroutines. A limit below one
+// leaves the ask unbounded.
+func Throttle(ask Ask, limit int) Ask {
+	if limit < 1 {
+		return ask
+	}
+	slots := make(chan struct{}, limit)
+	return func(ctx context.Context, req Request) (json.RawMessage, error) {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		defer func() { <-slots }()
+		return ask(ctx, req)
+	}
+}
+
 // Args builds the CLI arguments for a request, excluding the prompt.
 func Args(req Request) []string {
 	args := []string{

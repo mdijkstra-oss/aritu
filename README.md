@@ -202,10 +202,14 @@ costs nothing to know and cannot be disagreed with.
 |---|---|---|
 | `--model` | `sonnet` | model passed to the claude CLI |
 | `--votes` | `2` | rounds that must all agree before a unit passes |
+| `--jobs` | `5` | model calls allowed in flight at once |
 | `--effort` | — | reasoning effort; empty leaves the CLI default |
 | `--rules` | `./rules` | directory holding `base.md` and one subdirectory per rule |
 | `--claude` | `claude` | claude CLI binary to invoke |
 | `--timeout` | `10m` | deadline for the whole run, so a hung CLI cannot hang a commit hook |
+
+`--jobs` bounds concurrency at the one seam every model call passes through, so
+fixture-level and vote-level parallelism cannot multiply into a process storm.
 
 `--timeout` covers the entire run rather than a single call, so it scales with how
 many fixtures a rule has. A large corpus at high `--votes` may need more than the

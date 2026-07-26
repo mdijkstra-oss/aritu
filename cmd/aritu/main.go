@@ -23,6 +23,7 @@ const (
 	defaultRulesDir = "./rules"
 	defaultClaude   = "claude"
 	defaultTimeout  = 10 * time.Minute
+	defaultJobs     = 5
 )
 
 func main() {
@@ -77,7 +78,7 @@ func applyReport(ctx context.Context, opts options, ruleName, file string) (lint
 	if err != nil {
 		return withError(pending, err), err
 	}
-	report, err := lint.Apply(ctx, claudecli.Exec(opts.claude), lint.Options{
+	report, err := lint.Apply(ctx, askFor(opts), lint.Options{
 		Rule:   r,
 		Base:   base,
 		File:   file,
@@ -89,6 +90,12 @@ func applyReport(ctx context.Context, opts options, ruleName, file string) (lint
 		return withError(report, err), err
 	}
 	return report, nil
+}
+
+// askFor bounds concurrency at the seam every model call passes through, so
+// fixture-level and vote-level parallelism cannot multiply into a process storm.
+func askFor(opts options) claudecli.Ask {
+	return claudecli.Throttle(claudecli.Exec(opts.claude), opts.jobs)
 }
 
 func withError(r lint.Report, err error) lint.Report {
@@ -116,8 +123,9 @@ func runSelftest(args []string, stdout, stderr io.Writer) lint.Exit {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
 
+	started := time.Now()
 	selftestOpts, results, runErr := selftestResults(ctx, opts, opts.args[0])
-	if err := selftest.Format(stdout, selftestOpts, results); err != nil {
+	if err := selftest.Format(stdout, selftestOpts, results, time.Since(started)); err != nil {
 		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
 		return lint.ExitError
 	}
@@ -151,12 +159,13 @@ func selftestResults(ctx context.Context, opts options, ruleName string) (selfte
 	if err != nil {
 		return selftestOpts, nil, err
 	}
-	return selftestOpts, selftest.Run(ctx, claudecli.Exec(opts.claude), selftestOpts, fixtures), nil
+	return selftestOpts, selftest.Run(ctx, askFor(opts), selftestOpts, fixtures), nil
 }
 
 type options struct {
 	model    string
 	votes    int
+	jobs     int
 	effort   string
 	rulesDir string
 	claude   string
@@ -204,6 +213,7 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 func registerFlags(fs *flag.FlagSet, opts *options) {
 	fs.StringVar(&opts.model, "model", defaultModel, "model name passed to the claude CLI")
 	fs.IntVar(&opts.votes, "votes", defaultVotes, "rounds that must all agree before a test passes")
+	fs.IntVar(&opts.jobs, "jobs", defaultJobs, "model calls allowed in flight at once")
 	fs.StringVar(&opts.effort, "effort", defaultEffort, "reasoning effort; empty leaves the CLI default")
 	fs.StringVar(&opts.rulesDir, "rules", defaultRulesDir, "directory holding one subdirectory per rule")
 	fs.StringVar(&opts.claude, "claude", defaultClaude, "claude CLI binary to invoke")

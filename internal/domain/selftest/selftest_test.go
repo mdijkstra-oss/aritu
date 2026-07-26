@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
@@ -85,78 +86,85 @@ func TestFormat(t *testing.T) {
 			opts: Options{Rule: rule.Rule{Name: "one-reason-to-fail"}, Votes: 4, Model: "sonnet"},
 			results: []Result{
 				{
-					Fixture: rule.Fixture{Name: "fail-two-behaviors", Expect: rule.ExpectFail},
-					Report:  lint.Report{Verdicts: map[string]int{"TestB": 0, "TestA": 0}},
-					Held:    true,
+					Fixture:  rule.Fixture{Name: "fail-two-behaviors", Expect: rule.ExpectFail},
+					Report:   lint.Report{Verdicts: map[string]int{"TestB": 0, "TestA": 0}},
+					Held:     true,
+					Duration: 1500 * time.Millisecond,
 				},
 				{
-					Fixture: rule.Fixture{Name: "pass-single-assert", Expect: rule.ExpectPass},
-					Report:  lint.Report{Verdicts: map[string]int{"TestA": 3}},
+					Fixture:  rule.Fixture{Name: "pass-single-assert", Expect: rule.ExpectPass},
+					Report:   lint.Report{Verdicts: map[string]int{"TestA": 3}},
+					Duration: 820 * time.Millisecond,
 				},
 				{
-					Fixture: rule.Fixture{Name: "pass-unreadable", Expect: rule.ExpectPass},
-					Err:     errors.New("read testdata: nope"),
+					Fixture:  rule.Fixture{Name: "pass-unreadable", Expect: rule.ExpectPass},
+					Err:      errors.New("read testdata: nope"),
+					Duration: 12 * time.Millisecond,
 				},
 			},
 			want: "rule: one-reason-to-fail  model: sonnet  votes: 4\n" +
 				"\n" +
-				"FIXTURE             EXPECT  RESULT  VERDICTS\n" +
-				"fail-two-behaviors  fail    hold    TestA=0 TestB=0\n" +
-				"pass-single-assert  pass    MISS    TestA=3\n" +
-				"pass-unreadable     pass    ERROR   read testdata: nope\n" +
+				"FIXTURE             EXPECT  RESULT  TIME   VERDICTS\n" +
+				"fail-two-behaviors  fail    hold    1.5s   TestA=0 TestB=0\n" +
+				"pass-single-assert  pass    MISS    820ms  TestA=3\n" +
+				"pass-unreadable     pass    ERROR   12ms   read testdata: nope\n" +
 				"\n" +
-				"1/3 fixtures hold\n",
+				"1/3 fixtures hold in 2.4s\n",
 		},
 		{
 			name: "every fixture holds",
 			opts: Options{Rule: rule.Rule{Name: "named-for-behavior"}, Votes: 2, Model: "haiku"},
 			results: []Result{
 				{
-					Fixture: rule.Fixture{Name: "pass-alpha", Expect: rule.ExpectPass},
-					Report:  lint.Report{Verdicts: map[string]int{"TestAlpha": 2}},
-					Held:    true,
+					Fixture:  rule.Fixture{Name: "pass-alpha", Expect: rule.ExpectPass},
+					Report:   lint.Report{Verdicts: map[string]int{"TestAlpha": 2}},
+					Held:     true,
+					Duration: 1500 * time.Millisecond,
 				},
 				{
-					Fixture: rule.Fixture{Name: "fail-beta", Expect: rule.ExpectFail},
-					Report:  lint.Report{Verdicts: map[string]int{"TestBeta": 0}},
-					Held:    true,
+					Fixture:  rule.Fixture{Name: "fail-beta", Expect: rule.ExpectFail},
+					Report:   lint.Report{Verdicts: map[string]int{"TestBeta": 0}},
+					Held:     true,
+					Duration: 1500 * time.Millisecond,
 				},
 			},
 			want: "rule: named-for-behavior  model: haiku  votes: 2\n" +
 				"\n" +
-				"FIXTURE     EXPECT  RESULT  VERDICTS\n" +
-				"pass-alpha  pass    hold    TestAlpha=2\n" +
-				"fail-beta   fail    hold    TestBeta=0\n" +
+				"FIXTURE     EXPECT  RESULT  TIME  VERDICTS\n" +
+				"pass-alpha  pass    hold    1.5s  TestAlpha=2\n" +
+				"fail-beta   fail    hold    1.5s  TestBeta=0\n" +
 				"\n" +
-				"2/2 fixtures hold\n",
+				"2/2 fixtures hold in 2.4s\n",
 		},
 		{
 			name: "an error carrying newlines stays on a single row",
 			opts: Options{Rule: rule.Rule{Name: "one-reason-to-fail"}, Votes: 2, Model: "sonnet"},
 			results: []Result{
 				{
-					Fixture: rule.Fixture{Name: "pass-alpha", Expect: rule.ExpectPass},
-					Report:  lint.Report{Verdicts: map[string]int{"TestAlpha": 2}},
-					Held:    true,
+					Fixture:  rule.Fixture{Name: "pass-alpha", Expect: rule.ExpectPass},
+					Report:   lint.Report{Verdicts: map[string]int{"TestAlpha": 2}},
+					Held:     true,
+					Duration: 1500 * time.Millisecond,
 				},
 				{
-					Fixture: rule.Fixture{Name: "pass-crashed", Expect: rule.ExpectPass},
-					Err:     errors.New("claudecli: claude exit status 1:\nError: connect ECONNREFUSED\n    at TCPConnectWrap.afterConnect"),
+					Fixture:  rule.Fixture{Name: "pass-crashed", Expect: rule.ExpectPass},
+					Err:      errors.New("claudecli: claude exit status 1:\nError: connect ECONNREFUSED\n    at TCPConnectWrap.afterConnect"),
+					Duration: 40 * time.Millisecond,
 				},
 			},
 			want: "rule: one-reason-to-fail  model: sonnet  votes: 2\n" +
 				"\n" +
-				"FIXTURE       EXPECT  RESULT  VERDICTS\n" +
-				"pass-alpha    pass    hold    TestAlpha=2\n" +
-				"pass-crashed  pass    ERROR   claudecli: claude exit status 1: Error: connect ECONNREFUSED at TCPConnectWrap.afterConnect\n" +
+				"FIXTURE       EXPECT  RESULT  TIME  VERDICTS\n" +
+				"pass-alpha    pass    hold    1.5s  TestAlpha=2\n" +
+				"pass-crashed  pass    ERROR   40ms  claudecli: claude exit status 1: Error: connect ECONNREFUSED at TCPConnectWrap.afterConnect\n" +
 				"\n" +
-				"1/2 fixtures hold\n",
+				"1/2 fixtures hold in 2.4s\n",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := Format(&out, tc.opts, tc.results); err != nil {
+			if err := Format(&out, tc.opts, tc.results, 2400*time.Millisecond); err != nil {
 				t.Fatalf("Format returned %v", err)
 			}
 			if out.String() != tc.want {
@@ -173,7 +181,7 @@ func TestFormatReturnsWriterError(t *testing.T) {
 		Report:  lint.Report{Verdicts: map[string]int{"TestAlpha": 2}},
 		Held:    true,
 	}}
-	err := Format(failingWriter{err: want}, Options{Rule: rule.Rule{Name: "demo"}, Votes: 2, Model: "sonnet"}, results)
+	err := Format(failingWriter{err: want}, Options{Rule: rule.Rule{Name: "demo"}, Votes: 2, Model: "sonnet"}, results, time.Second)
 	if !errors.Is(err, want) {
 		t.Fatalf("Format returned %v, want %v", err, want)
 	}

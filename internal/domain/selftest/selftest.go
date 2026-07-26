@@ -7,7 +7,9 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"text/tabwriter"
+	"time"
 
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
@@ -18,10 +20,11 @@ import (
 // Result pairs a fixture with the report it produced and whether that report
 // matched the expectation the fixture's directory name carries.
 type Result struct {
-	Fixture rule.Fixture
-	Report  lint.Report
-	Held    bool
-	Err     error
+	Fixture  rule.Fixture
+	Report   lint.Report
+	Held     bool
+	Err      error
+	Duration time.Duration
 }
 
 // Options configures one selftest run.
@@ -33,27 +36,22 @@ type Options struct {
 	Effort string
 }
 
-// Run applies the rule to every fixture in order. A fixture that errors is
-// recorded and the run continues, so one unreachable call cannot hide the rest
-// of the table.
+// Run applies the rule to every fixture, concurrently. Results come back in
+// fixture order however the calls interleave, and a fixture that errors is
+// recorded rather than aborting the run, so one unreachable call cannot hide the
+// rest of the table. How many calls actually run at once is bounded by the ask,
+// not here.
 func Run(ctx context.Context, ask claudecli.Ask, opts Options, fixtures []rule.Fixture) []Result {
-	results := make([]Result, 0, len(fixtures))
-	for _, fixture := range fixtures {
-		report, err := lint.Apply(ctx, ask, lint.Options{
-			Rule:   opts.Rule,
-			Base:   opts.Base,
-			File:   fixture.TestFile,
-			Votes:  opts.Votes,
-			Model:  opts.Model,
-			Effort: opts.Effort,
-		})
-		results = append(results, Result{
-			Fixture: fixture,
-			Report:  report,
-			Held:    err == nil && Holds(fixture.Expect, report.Verdicts, opts.Votes),
-			Err:     err,
-		})
+	results := make([]Result, len(fixtures))
+	var wg sync.WaitGroup
+	for i, fixture := range fixtures {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = judge(ctx, ask, opts, fixture)
+		}()
 	}
+	wg.Wait()
 	return results
 }
 
@@ -91,16 +89,48 @@ func ExitFor(results []Result) lint.Exit {
 }
 
 // Format renders the results as an aligned table. It prints whether or not the
-// run held, because the counts are the whole diagnostic.
-func Format(w io.Writer, opts Options, results []Result) error {
+// run held, because the counts are the whole diagnostic. Elapsed is the wall
+// clock for the whole run, which with concurrent fixtures is less than the sum of
+// the rows and is the number a caller actually waited.
+func Format(w io.Writer, opts Options, results []Result, elapsed time.Duration) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "rule: %s  model: %s  votes: %d\n\n", opts.Rule.Name, opts.Model, opts.Votes)
-	fmt.Fprintln(tw, "FIXTURE\tEXPECT\tRESULT\tVERDICTS")
+	fmt.Fprintln(tw, "FIXTURE\tEXPECT\tRESULT\tTIME\tVERDICTS")
 	for _, result := range results {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", result.Fixture.Name, result.Fixture.Expect, outcomeOf(result), detailOf(result))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			result.Fixture.Name, result.Fixture.Expect, outcomeOf(result),
+			FormatDuration(result.Duration), detailOf(result))
 	}
-	fmt.Fprintf(tw, "\n%d/%d fixtures hold\n", countHeld(results), len(results))
+	fmt.Fprintf(tw, "\n%d/%d fixtures hold in %s\n", countHeld(results), len(results), FormatDuration(elapsed))
 	return tw.Flush()
+}
+
+// FormatDuration renders a duration at a precision worth reading: whole
+// milliseconds below a second, tenths of a second above it.
+func FormatDuration(d time.Duration) string {
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(100 * time.Millisecond).String()
+}
+
+func judge(ctx context.Context, ask claudecli.Ask, opts Options, fixture rule.Fixture) Result {
+	started := time.Now()
+	report, err := lint.Apply(ctx, ask, lint.Options{
+		Rule:   opts.Rule,
+		Base:   opts.Base,
+		File:   fixture.TestFile,
+		Votes:  opts.Votes,
+		Model:  opts.Model,
+		Effort: opts.Effort,
+	})
+	return Result{
+		Fixture:  fixture,
+		Report:   report,
+		Held:     err == nil && Holds(fixture.Expect, report.Verdicts, opts.Votes),
+		Err:      err,
+		Duration: time.Since(started),
+	}
 }
 
 func outcomeOf(result Result) string {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -244,5 +245,85 @@ func assertResult(t *testing.T, got json.RawMessage, err error, want string, wan
 	}
 	if string(got) != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+func TestThrottleBoundsCallsInFlight(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    int
+		calls    int
+		wantPeak int
+	}{
+		{name: "a limit of one serialises every call", limit: 1, calls: 6, wantPeak: 1},
+		{name: "a limit of three admits three at a time", limit: 3, calls: 9, wantPeak: 3},
+		{name: "a limit above the call count admits them all", limit: 8, calls: 4, wantPeak: 4},
+		{name: "a limit below one leaves the ask unbounded", limit: 0, calls: 5, wantPeak: 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			inFlight, peak := 0, 0
+			hold := func(context.Context, Request) (json.RawMessage, error) {
+				mu.Lock()
+				inFlight++
+				peak = max(peak, inFlight)
+				mu.Unlock()
+				time.Sleep(30 * time.Millisecond)
+				mu.Lock()
+				inFlight--
+				mu.Unlock()
+				return json.RawMessage(`{}`), nil
+			}
+
+			throttled := Throttle(hold, tt.limit)
+			var wg sync.WaitGroup
+			for range tt.calls {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, _ = throttled(context.Background(), Request{})
+				}()
+			}
+			wg.Wait()
+
+			mu.Lock()
+			defer mu.Unlock()
+			if peak != tt.wantPeak {
+				t.Errorf("peak calls in flight = %d, want %d", peak, tt.wantPeak)
+			}
+		})
+	}
+}
+
+func TestThrottleAbandonsAWaitingCallWhenTheContextEnds(t *testing.T) {
+	blocked := make(chan struct{})
+	defer close(blocked)
+	throttled := Throttle(func(context.Context, Request) (json.RawMessage, error) {
+		<-blocked
+		return json.RawMessage(`{}`), nil
+	}, 1)
+
+	go func() { _, _ = throttled(context.Background(), Request{}) }()
+	time.Sleep(20 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := throttled(ctx, Request{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestThrottleReleasesTheSlotWhenTheCallFails(t *testing.T) {
+	throttled := Throttle(func(context.Context, Request) (json.RawMessage, error) {
+		return nil, errors.New("boom")
+	}, 1)
+
+	for range 3 {
+		if _, err := throttled(context.Background(), Request{}); err == nil {
+			t.Fatal("want the underlying error, got none")
+		}
 	}
 }

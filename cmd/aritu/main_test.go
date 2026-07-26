@@ -226,6 +226,7 @@ func TestParseOptions(t *testing.T) {
 		model:    defaultModel,
 		votes:    defaultVotes,
 		effort:   defaultEffort,
+		jobs:     defaultJobs,
 		rulesDir: defaultRulesDir,
 		claude:   defaultClaude,
 		timeout:  defaultTimeout,
@@ -258,6 +259,7 @@ func TestParseOptions(t *testing.T) {
 			want: withArgs(options{
 				model:    "opus",
 				votes:    2,
+				jobs:     defaultJobs,
 				rulesDir: defaultRulesDir,
 				claude:   defaultClaude,
 				timeout:  defaultTimeout,
@@ -271,6 +273,7 @@ func TestParseOptions(t *testing.T) {
 			want: withArgs(options{
 				model:    "opus",
 				votes:    2,
+				jobs:     defaultJobs,
 				rulesDir: defaultRulesDir,
 				claude:   defaultClaude,
 				timeout:  defaultTimeout,
@@ -285,6 +288,7 @@ func TestParseOptions(t *testing.T) {
 				model:    defaultModel,
 				votes:    defaultVotes,
 				effort:   "high",
+				jobs:     defaultJobs,
 				rulesDir: defaultRulesDir,
 				claude:   defaultClaude,
 				timeout:  defaultTimeout,
@@ -293,12 +297,13 @@ func TestParseOptions(t *testing.T) {
 		{
 			name:        "every flag overridden",
 			command:     "selftest",
-			args:        []string{"one-reason-to-fail", "--model", "haiku", "--votes", "7", "--effort", "low", "--rules", "/etc/aritu/rules", "--claude", "/usr/local/bin/claude", "--timeout", "90s"},
+			args:        []string{"one-reason-to-fail", "--model", "haiku", "--votes", "7", "--effort", "low", "--rules", "/etc/aritu/rules", "--claude", "/usr/local/bin/claude", "--timeout", "90s", "--jobs", "3"},
 			positionals: 1,
 			want: withArgs(options{
 				model:    "haiku",
 				votes:    7,
 				effort:   "low",
+				jobs:     3,
 				rulesDir: "/etc/aritu/rules",
 				claude:   "/usr/local/bin/claude",
 				timeout:  90 * time.Second,
