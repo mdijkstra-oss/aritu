@@ -1,0 +1,14 @@
+# Built binary. Anchored to the repo root so it cannot swallow cmd/aritu/.
+/aritu
+
+# Test and coverage output
+*.test
+*.out
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
