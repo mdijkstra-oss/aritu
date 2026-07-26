@@ -3,10 +3,9 @@
 A shield against tests that do not earn their keep.
 
 aritu is an LLM linter for Go tests. You give it a rule and a test file; it asks a
-model whether each test function in that file satisfies the rule, several times
-over, and reports how many runs agreed. Run it in CI or from a pre-commit hook to
-stop tests that assert nothing, name nothing, or mock away the thing they claim to
-cover.
+model whether each unit of that file satisfies the rule, several times over, and
+reports how many runs agreed. Run it in CI or from a pre-commit hook to stop tests
+that assert nothing, name nothing, or mock away the thing they claim to cover.
 
 It does no code parsing. There is no AST, no matcher DSL, no suppression comments —
 just files, a prompt, and a vote.
@@ -23,40 +22,48 @@ Requires Go 1.25+ and the `claude` CLI on `PATH`, already authenticated.
 
 ```sh
 # judge one file against one rule
-aritu apply one-reason-to-fail internal/parser/parser_test.go --model sonnet --votes 4
+aritu apply one-reason-to-fail internal/parser/parser_test.go
 
 # run a rule against its whole fixture corpus and check each result
 # against the expectation its directory name carries
-aritu selftest one-reason-to-fail --model sonnet --votes 4
+aritu selftest one-reason-to-fail --votes 4
 ```
 
 `apply` prints the counts as JSON:
 
 ```json
 {
-  "rule": "one-reason-to-fail",
+  "rule": "named-for-behavior",
   "file": "internal/parser/parser_test.go",
-  "votes": 4,
+  "votes": 2,
   "verdicts": {
-    "TestParsesHostAndPort": 4,
-    "TestRejectsMalformedPort": 0
+    "TestParseConfig (extracts host before colon)": 2,
+    "TestParseConfig (host and port)": 0
+  },
+  "reasons": {
+    "TestParseConfig (host and port)": [
+      "names the input the case supplies rather than the outcome it protects, so a reader seeing it fail learns nothing about what regressed"
+    ]
   }
 }
 ```
 
-Each value is how many of the `votes` runs judged that test to satisfy the rule.
-**A test passes only at full agreement.** Every other count is a failure — `0` and
+Each value is how many of the `votes` runs judged that unit to satisfy the rule.
+**A unit passes only at full agreement.** Every other count is a failure — `0` and
 `3` of `4` alike.
 
 The count is not a second verdict. It is how close the prompt is. `3` of `4` is a
 rule nearly working; `0` of `4` on a test that should pass is a rule that is
 broken. Both fail, and the number is what tells them apart while you tune.
 
+`reasons` carries one sentence per dissenting run, for units that fell short. A
+unanimous pass has nothing to explain, so it is omitted.
+
 ### Exit codes
 
 | code | meaning |
 |---|---|
-| `0` | every test function unanimously satisfies the rule |
+| `0` | every unit unanimously satisfies the rule |
 | `1` | one or more do not, whether the votes were unanimously against or split |
 | `2` | could not run — model unreachable, file not found, bad response, name/verdict mismatch |
 
@@ -74,25 +81,31 @@ A rule is a directory. One rule per directory, under `rules/` by default
 (`--rules` to point elsewhere).
 
 ```
-rules/one-reason-to-fail/
-  prompt.md
-  fixtures/
-    pass-single-assert/
-      scenario.go
-      scenario_test.go
-    pass-multiple-asserts-one-behavior/
-    fail-two-unrelated-behaviors/
-    fail-act-assert-chain/
+rules/
+  base.md                        # shared prompt, prepended to every rule
+  one-reason-to-fail/
+    prompt.md
+    fixtures/
+      pass-single-assert/
+        scenario.go
+        scenario_test.go
+      pass-multiple-asserts-one-behavior/
+      fail-two-unrelated-behaviors/
+      fail-act-assert-chain/
 ```
 
-`prompt.md` carries YAML frontmatter and the criterion:
+`base.md` holds what every rule would otherwise repeat: that Go tests come in many
+shapes and the behaviour is judged rather than the syntax, what a unit is, and how
+to write a reason. A rule's `prompt.md` is then only its criterion.
+
+`prompt.md` carries YAML frontmatter and that criterion:
 
 ```markdown
 ---
 include_source: false
+granularity: test
 ---
-A test must have one reason to fail: it pins down a single behaviour, however
-many assertions it takes to do so...
+A test's name must say which behaviour breaks when the test fails...
 ```
 
 `include_source` decides what the model sees. With `false` only the test file is
@@ -105,6 +118,37 @@ Ships with three rules:
 - **`named-for-behavior`** — named for the behavior it protects, specifically
 - **`one-reason-to-fail`** — one behavior, however many assertions
 - **`no-mocking-under-test`** — doesn't mock the thing under test
+
+### Granularity
+
+`granularity` declares what a rule judges. The levels form a scale, each a
+refinement of the one above:
+
+| level | keys returned | key is |
+|---|---|---|
+| `file` | one | `internal/parser/parser_test.go` |
+| `function` | one per `func Test*` | `TestParseConfig` |
+| `test` | one per independently nameable leaf | `TestParseConfig (rejects blank input)` |
+
+At `test` granularity a table row, a `map[string]struct{...}` key and a `t.Run`
+subtest are each a leaf; a plain function that declares none of them is one leaf by
+itself.
+
+**The unit judged is the whole identifier**, which is also what Go prints when a
+case fails. Neither half has to carry the meaning alone:
+
+```
+TestTrimsSurroundingWhitespaceFromEachTag (leading spaces)   ← function states it
+TestParseAddress (extracts host before colon)                ← case states it
+TestParseConfig (host and port)                              ← neither does: fails
+```
+
+That is why a table of many inputs to one behaviour is fine with input-named rows,
+and why deleting your case names does not help — it pushes judgement up onto a
+function name that now has to carry every claim at once.
+
+Both keys are required. Defaulting either one silently changes what the model sees
+or what it judges, and nothing would report it.
 
 ### Writing a rule
 
@@ -119,16 +163,15 @@ compile otherwise. The `pass-`/`fail-` prefix carries the expectation, and
 `selftest` checks every fixture against it:
 
 ```
-rule: one-reason-to-fail  model: sonnet  votes: 4
+rule: named-for-behavior  model: sonnet  votes: 4
 
-FIXTURE                             EXPECT  RESULT  VERDICTS
-fail-act-assert-chain               fail    hold    TestStackHandlesPushingPoppingAndDraining=0
-fail-two-unrelated-behaviors        fail    hold    TestLowercasesSurroundedNamesAndRejectsBlankOnes=0
-pass-multiple-asserts-one-behavior  pass    hold    TestSplitsAWellFormedAddressIntoHostAndPort=4
-pass-single-assert                  pass    hold    TestReturnsTheFallbackWhenTheKeyIsMissing=4
-pass-table-driven-one-behavior      pass    hold    TestPullsValuesOutsideThePercentageRangeToTheNearestBound=4
+FIXTURE                                   EXPECT  RESULT  VERDICTS
+fail-namespace-function-input-rows        fail    hold    TestParseClock (hour of 24)=0 TestParseClock (midnight)=0 ...
+fail-numbered-rows                        fail    hold    TestRunningTotals (case 1)=0 TestRunningTotals (case 2)=0 ...
+pass-namespace-function-behavioural-rows  pass    hold    TestParseSemver (rejects a version missing the patch component)=4 ...
+pass-subtests-named-for-behaviour         pass    hold    TestDeduplicate (drops values that already appeared)=4 ...
 
-5/5 fixtures hold
+11/11 fixtures hold
 ```
 
 `selftest` is `apply` in a loop — same prompt, same voting, same code path. It adds
@@ -141,19 +184,29 @@ from missing.
 ## How it calls the model
 
 Two calls per file, both through the `claude` CLI via `exec`, with tools disabled
-and a replaced system prompt. The first enumerates the test functions; the second
-judges them. If the second returns a name the first did not, or drops one it did,
-that is an error and exit `2` — never a silent merge. Models are unreliable at
-exhaustive enumeration, and a quietly dropped test is the precise failure this tool
-exists to catch.
+and a replaced system prompt. The first enumerates the units at the rule's declared
+granularity; the second judges them, and is handed that list explicitly rather than
+left to re-derive it.
+
+If the second returns a unit the first did not list, or drops one it did, that is an
+error and exit `2` — never a silent merge. Models are unreliable at exhaustive
+enumeration, and a quietly dropped test is the precise failure this tool exists to
+catch.
+
+At `file` granularity the first call is skipped entirely: the unit is the path, which
+costs nothing to know and cannot be disagreed with.
 
 ## Flags
 
 | flag | default | |
 |---|---|---|
 | `--model` | `sonnet` | model passed to the claude CLI |
-| `--votes` | `4` | rounds that must all agree before a test passes |
+| `--votes` | `2` | rounds that must all agree before a unit passes |
 | `--effort` | — | reasoning effort; empty leaves the CLI default |
-| `--rules` | `./rules` | directory holding one subdirectory per rule |
+| `--rules` | `./rules` | directory holding `base.md` and one subdirectory per rule |
 | `--claude` | `claude` | claude CLI binary to invoke |
 | `--timeout` | `10m` | deadline for the whole run, so a hung CLI cannot hang a commit hook |
+
+`--timeout` covers the entire run rather than a single call, so it scales with how
+many fixtures a rule has. A large corpus at high `--votes` may need more than the
+default.

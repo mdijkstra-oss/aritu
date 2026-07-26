@@ -18,6 +18,7 @@ func TestRun(t *testing.T) {
 	emptyRules := t.TempDir()
 	failingClaude := writeFailingClaude(t)
 	soloRules := writeSoloRule(t)
+	baselessRules := writeRuleWithoutBase(t)
 	soloFixture := filepath.Join(soloRules, "solo", "fixtures", "pass-only", "scenario_test.go")
 
 	tests := []struct {
@@ -111,7 +112,7 @@ func TestRun(t *testing.T) {
 			name:       "apply still reports when the rule cannot be loaded",
 			args:       []string{"apply", "--rules", emptyRules, "no-such-rule", "parser_test.go"},
 			want:       lint.ExitError,
-			wantStdout: []string{`"rule": "no-such-rule"`, `"file": "parser_test.go"`, `"votes": 4`, `"verdicts": {}`, `"error"`, "no-such-rule"},
+			wantStdout: []string{`"rule": "no-such-rule"`, `"file": "parser_test.go"`, `"votes": 2`, `"verdicts": {}`, `"error"`, "no-such-rule"},
 		},
 		{
 			name:       "apply still reports when the model cannot be reached",
@@ -125,6 +126,19 @@ func TestRun(t *testing.T) {
 			want:       lint.ExitError,
 			wantStdout: []string{"FIXTURE", "EXPECT", "RESULT", "VERDICTS", "0/0 fixtures hold"},
 			wantStderr: []string{"aritu selftest:", "no-such-rule"},
+		},
+		{
+			name:       "apply reports a rules directory with no shared base prompt",
+			args:       []string{"apply", "--rules", baselessRules, "solo", "parser_test.go"},
+			want:       lint.ExitError,
+			wantStdout: []string{`"error"`, "base prompt", "base.md"},
+		},
+		{
+			name:       "selftest reports a rules directory with no shared base prompt",
+			args:       []string{"selftest", "--rules", baselessRules, "solo"},
+			want:       lint.ExitError,
+			wantStdout: []string{"FIXTURE"},
+			wantStderr: []string{"base prompt", "base.md"},
 		},
 		{
 			name:       "selftest still prints its table when the model cannot be reached",
@@ -188,9 +202,22 @@ func writeSoloRule(t *testing.T) string {
 			t.Fatalf("writing %s: %v", path, err)
 		}
 	}
-	write(filepath.Join(root, "solo", "prompt.md"), "---\ninclude_source: false\n---\nA test must pin down one behaviour.\n")
+	write(filepath.Join(root, "base.md"), "Judge the behaviour a test pins down, never its syntax.\n")
+	write(filepath.Join(root, "solo", "prompt.md"), "---\ninclude_source: false\ngranularity: function\n---\nA test must pin down one behaviour.\n")
 	write(filepath.Join(fixture, "scenario.go"), "package scenario\n")
 	write(filepath.Join(fixture, "scenario_test.go"), "package scenario\n\nimport \"testing\"\n\nfunc TestDoesAThing(t *testing.T) { _ = t }\n")
+	return root
+}
+
+// writeRuleWithoutBase builds a rules directory holding a valid rule but no
+// base.md, the shape that must fail loudly rather than judge without the shared
+// guidance every rule is written against.
+func writeRuleWithoutBase(t *testing.T) string {
+	t.Helper()
+	root := writeSoloRule(t)
+	if err := os.Remove(filepath.Join(root, "base.md")); err != nil {
+		t.Fatalf("removing base.md: %v", err)
+	}
 	return root
 }
 

@@ -191,7 +191,7 @@ func TestRun(t *testing.T) {
 		writeFixture(t, root, "fail-bad", rule.ExpectFail, "TestBad"),
 	}
 	opts := Options{
-		Rule:  rule.Rule{Name: "one-reason-to-fail", Dir: root, Prompt: "A test has one reason to fail."},
+		Rule:  rule.Rule{Name: "one-reason-to-fail", Dir: root, Prompt: "A test has one reason to fail.", Granularity: rule.GranularityFunction},
 		Votes: 3,
 		Model: "sonnet",
 	}

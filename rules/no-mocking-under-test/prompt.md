@@ -1,5 +1,6 @@
 ---
 include_source: true
+granularity: function
 ---
 Judge whether the test exercises the real implementation of the unit it claims to test.
 
@@ -46,10 +47,6 @@ DISQUALIFIES the rule:
 - Every assertion in the test would still hold with the real implementation deleted; the
   test pins down its own scaffolding and nothing else.
 
-Go tests come in many shapes: table-driven with a slice of cases, subtests via t.Run, plain
-linear arrange-act-assert, golden-file comparisons, functional or integration tests that
-stand up real dependencies. Judge the behaviour the test pins down, never the syntax it
-uses. A table-driven test is not a violation of anything, and neither is a test without a
-table. A type with "mock", "stub", "fake" or "spy" in its name is not by itself a
-violation either. What decides it is whether the substituted thing is the subject or a
-collaborator, and whether the assertions are about real behaviour.
+A type with "mock", "stub", "fake" or "spy" in its name is not by itself a violation. What
+decides it is whether the substituted thing is the subject or a collaborator, and whether
+the assertions are about real behaviour.

@@ -17,10 +17,16 @@ type Rule struct {
 	Dir           string
 	Prompt        string
 	IncludeSource bool
+	Granularity   Granularity
 }
 
 // Expectation is the pass/fail outcome a fixture directory name asserts.
 type Expectation int
+
+// Granularity is the unit a rule judges. The levels form a scale: each is a
+// refinement of the one above, so the number of verdicts a file yields never
+// decreases as the level gets finer.
+type Granularity int
 
 // Fixture is one scenario directory exercising a rule.
 type Fixture struct {
@@ -32,12 +38,23 @@ type Fixture struct {
 // Prompt is a parsed prompt.md: its frontmatter settings and its body.
 type Prompt struct {
 	IncludeSource bool
+	Granularity   Granularity
 	Body          string
 }
 
 const (
 	ExpectPass Expectation = iota + 1
 	ExpectFail
+)
+
+const (
+	// GranularityFile judges the file as a single unit, keyed by its path.
+	GranularityFile Granularity = iota + 1
+	// GranularityFunction judges each top-level test function.
+	GranularityFunction
+	// GranularityTest judges each independently nameable leaf: a table row, a
+	// t.Run subtest, or the function itself when it declares neither.
+	GranularityTest
 )
 
 // Load reads <rulesDir>/<name>/prompt.md.
@@ -56,7 +73,23 @@ func Load(rulesDir, name string) (Rule, error) {
 		Dir:           dir,
 		Prompt:        prompt.Body,
 		IncludeSource: prompt.IncludeSource,
+		Granularity:   prompt.Granularity,
 	}, nil
+}
+
+// LoadBase reads the shared prompt prepended to every rule body. Its absence is
+// an error rather than an empty string: without it every verdict call silently
+// loses the guidance that keeps rules comparable, and nothing would report that.
+func LoadBase(rulesDir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(rulesDir, baseFileName))
+	if err != nil {
+		return "", fmt.Errorf("shared base prompt: %w", err)
+	}
+	base := strings.TrimSpace(string(raw))
+	if base == "" {
+		return "", fmt.Errorf("shared base prompt: %s is empty", filepath.Join(rulesDir, baseFileName))
+	}
+	return base, nil
 }
 
 // LoadFixtures lists the rule's fixture directories, sorted by name.
@@ -104,10 +137,27 @@ func ParsePrompt(raw string) (Prompt, error) {
 	if front.IncludeSource == nil {
 		return Prompt{}, errors.New("prompt.md: frontmatter must set include_source")
 	}
+	if front.Granularity == nil {
+		return Prompt{}, errors.New("prompt.md: frontmatter must set granularity")
+	}
+	granularity, err := ParseGranularity(*front.Granularity)
+	if err != nil {
+		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
+	}
 	return Prompt{
 		IncludeSource: *front.IncludeSource,
+		Granularity:   granularity,
 		Body:          joinAfterLeadingBlanks(lines[closing+1:]),
 	}, nil
+}
+
+// ParseGranularity reads the unit a rule declares it judges.
+func ParseGranularity(name string) (Granularity, error) {
+	granularity, isKnown := granularityNames[name]
+	if !isKnown {
+		return 0, fmt.Errorf("granularity %q: must be file, function or test", name)
+	}
+	return granularity, nil
 }
 
 // ParseExpectation reads the pass-/fail- prefix a fixture directory carries.
@@ -145,8 +195,23 @@ func (e Expectation) String() string {
 	}
 }
 
+// String renders a granularity as it is written in frontmatter.
+func (g Granularity) String() string {
+	switch g {
+	case GranularityFile:
+		return "file"
+	case GranularityFunction:
+		return "function"
+	case GranularityTest:
+		return "test"
+	default:
+		panic(fmt.Sprintf("unknown granularity: %d", int(g)))
+	}
+}
+
 const (
 	promptFileName  = "prompt.md"
+	baseFileName    = "base.md"
 	fixturesDirName = "fixtures"
 	testSuffix      = "_test.go"
 )
@@ -154,6 +219,12 @@ const (
 var expectationPrefixes = map[string]Expectation{
 	"pass-": ExpectPass,
 	"fail-": ExpectFail,
+}
+
+var granularityNames = map[string]Granularity{
+	"file":     GranularityFile,
+	"function": GranularityFunction,
+	"test":     GranularityTest,
 }
 
 func loadFixture(fixturesDir, name string) (Fixture, error) {
@@ -188,7 +259,8 @@ func findTestFile(dir string) (string, error) {
 }
 
 type frontmatter struct {
-	IncludeSource *bool `yaml:"include_source"`
+	IncludeSource *bool   `yaml:"include_source"`
+	Granularity   *string `yaml:"granularity"`
 }
 
 func isFrontmatterDelimiter(line string) bool {

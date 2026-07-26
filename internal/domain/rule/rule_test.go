@@ -15,33 +15,48 @@ func TestParsePrompt(t *testing.T) {
 	}{
 		{
 			name: "include_source true",
-			raw:  "---\ninclude_source: true\n---\n\nJudge the test.\n",
-			want: Prompt{IncludeSource: true, Body: "Judge the test.\n"},
+			raw:  "---\ninclude_source: true\ngranularity: function\n---\n\nJudge the test.\n",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Body: "Judge the test.\n"},
 		},
 		{
 			name: "include_source false",
-			raw:  "---\ninclude_source: false\n---\nJudge the test.",
-			want: Prompt{IncludeSource: false, Body: "Judge the test."},
+			raw:  "---\ninclude_source: false\ngranularity: test\n---\nJudge the test.",
+			want: Prompt{IncludeSource: false, Granularity: GranularityTest, Body: "Judge the test."},
 		},
 		{
 			name: "body keeps its own delimiters and blank lines",
-			raw:  "---\ninclude_source: true\n---\n\n\nfirst\n\n---\nlast\n",
-			want: Prompt{IncludeSource: true, Body: "first\n\n---\nlast\n"},
+			raw:  "---\ninclude_source: true\ngranularity: function\n---\n\n\nfirst\n\n---\nlast\n",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Body: "first\n\n---\nlast\n"},
 		},
 		{
 			name: "empty body",
-			raw:  "---\ninclude_source: true\n---\n",
-			want: Prompt{IncludeSource: true, Body: ""},
+			raw:  "---\ninclude_source: true\ngranularity: function\n---\n",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Body: ""},
 		},
 		{
 			name: "other frontmatter keys are ignored",
-			raw:  "---\ntitle: one reason to fail\ninclude_source: true\n---\nbody",
-			want: Prompt{IncludeSource: true, Body: "body"},
+			raw:  "---\ntitle: one reason to fail\ninclude_source: true\ngranularity: function\n---\nbody",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Body: "body"},
 		},
 		{
 			name:    "missing include_source key",
 			raw:     "---\ntitle: one reason to fail\n---\nbody",
 			wantErr: true,
+		},
+		{
+			name:    "missing granularity key",
+			raw:     "---\ninclude_source: true\n---\nbody",
+			wantErr: true,
+		},
+		{
+			name:    "granularity outside the allowed set",
+			raw:     "---\ninclude_source: true\ngranularity: package\n---\nbody",
+			wantErr: true,
+		},
+		{
+			name: "granularity file",
+			raw:  "---\ninclude_source: true\ngranularity: file\n---\nbody",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFile, Body: "body"},
 		},
 		{
 			name:    "empty frontmatter",
@@ -200,19 +215,19 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name:  "include_source true",
-			files: map[string]string{"one-reason-to-fail/prompt.md": "---\ninclude_source: true\n---\n\nOne behavior.\n"},
+			files: map[string]string{"one-reason-to-fail/prompt.md": "---\ninclude_source: true\ngranularity: function\n---\n\nOne behavior.\n"},
 			rule:  "one-reason-to-fail",
-			want:  Rule{Name: "one-reason-to-fail", Prompt: "One behavior.\n", IncludeSource: true},
+			want:  Rule{Name: "one-reason-to-fail", Prompt: "One behavior.\n", IncludeSource: true, Granularity: GranularityFunction},
 		},
 		{
 			name:  "include_source false",
-			files: map[string]string{"named-for-behavior/prompt.md": "---\ninclude_source: false\n---\nName it.\n"},
+			files: map[string]string{"named-for-behavior/prompt.md": "---\ninclude_source: false\ngranularity: test\n---\nName it.\n"},
 			rule:  "named-for-behavior",
-			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", IncludeSource: false},
+			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", IncludeSource: false, Granularity: GranularityTest},
 		},
 		{
 			name:    "missing rule directory",
-			files:   map[string]string{"other/prompt.md": "---\ninclude_source: true\n---\nbody"},
+			files:   map[string]string{"other/prompt.md": "---\ninclude_source: true\ngranularity: function\n---\nbody"},
 			rule:    "absent",
 			wantErr: true,
 		},
@@ -250,7 +265,7 @@ func TestLoad(t *testing.T) {
 }
 
 func TestLoadFixtures(t *testing.T) {
-	const prompt = "---\ninclude_source: true\n---\nbody\n"
+	const prompt = "---\ninclude_source: true\ngranularity: function\n---\nbody\n"
 
 	type wantFixture struct {
 		name     string
@@ -388,4 +403,110 @@ func writeTree(t *testing.T, files map[string]string) string {
 		}
 	}
 	return root
+}
+
+func TestParseGranularity(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    Granularity
+		wantErr bool
+	}{
+		{name: "file", in: "file", want: GranularityFile},
+		{name: "function", in: "function", want: GranularityFunction},
+		{name: "test", in: "test", want: GranularityTest},
+		{name: "package is not a level yet", in: "package", wantErr: true},
+		{name: "capitalised", in: "Test", wantErr: true},
+		{name: "empty", in: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseGranularity(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseGranularity(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("ParseGranularity(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGranularityStringNamesTheLevel(t *testing.T) {
+	tests := []struct {
+		name        string
+		granularity Granularity
+		want        string
+	}{
+		{name: "file", granularity: GranularityFile, want: "file"},
+		{name: "function", granularity: GranularityFunction, want: "function"},
+		{name: "test", granularity: GranularityTest, want: "test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.granularity.String(); got != tt.want {
+				t.Errorf("Granularity.String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGranularityStringPanicsOnAnUnknownValue(t *testing.T) {
+	tests := []struct {
+		name        string
+		granularity Granularity
+	}{
+		{name: "zero value", granularity: Granularity(0)},
+		{name: "out of range", granularity: Granularity(9)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("Granularity.String() did not panic")
+				}
+			}()
+			_ = tt.granularity.String()
+		})
+	}
+}
+
+func TestLoadBase(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   map[string]string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "trims surrounding whitespace",
+			files: map[string]string{"base.md": "\n\nJudge behaviour, not syntax.\n\n"},
+			want:  "Judge behaviour, not syntax.",
+		},
+		{
+			name:    "missing base is an error rather than an empty prompt",
+			files:   map[string]string{"other.md": "unrelated"},
+			wantErr: true,
+		},
+		{
+			name:    "blank base is an error",
+			files:   map[string]string{"base.md": "  \n\t\n"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := LoadBase(writeTree(t, tt.files))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("LoadBase() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("LoadBase() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

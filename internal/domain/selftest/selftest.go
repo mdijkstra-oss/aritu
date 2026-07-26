@@ -27,6 +27,7 @@ type Result struct {
 // Options configures one selftest run.
 type Options struct {
 	Rule   rule.Rule
+	Base   string
 	Votes  int
 	Model  string
 	Effort string
@@ -40,6 +41,7 @@ func Run(ctx context.Context, ask claudecli.Ask, opts Options, fixtures []rule.F
 	for _, fixture := range fixtures {
 		report, err := lint.Apply(ctx, ask, lint.Options{
 			Rule:   opts.Rule,
+			Base:   opts.Base,
 			File:   fixture.TestFile,
 			Votes:  opts.Votes,
 			Model:  opts.Model,

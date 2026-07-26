@@ -1,5 +1,6 @@
 ---
 include_source: false
+granularity: function
 ---
 A test must have one reason to fail: it pins down a single behaviour, however many
 assertions it takes to do so. When such a test goes red, the failing name and the
@@ -54,10 +55,8 @@ DISQUALIFIES the rule:
   unrelated invariant — a log line, a counter, an untouched field — takes on a second
   reason to fail.
 
-Go tests come in many shapes: table-driven with a slice of cases, subtests via `t.Run`,
-plain linear arrange-act-assert, golden-file comparisons, functional tests that drive a
-real system end to end. Shape carries no penalty and no credit. A table-driven test is
-not a violation of anything, a long test is not a violation, and a test with a single
-assertion is not automatically a pass — a lone assertion on a summary boolean can still
-be guarding a bundle. Judge how many distinct behaviours would each, on their own, turn
-this test red. One is a pass. More than one is a fail.
+Length carries no penalty and assertion count carries no credit. A long test is not a
+violation, and a test with a single assertion is not automatically a pass — a lone
+assertion on a summary boolean can still be guarding a bundle. Judge how many distinct
+behaviours would each, on their own, turn this test red. One is a pass. More than one is
+a fail.

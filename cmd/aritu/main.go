@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultModel    = "sonnet"
-	defaultVotes    = 4
+	defaultVotes    = 2
 	defaultEffort   = ""
 	defaultRulesDir = "./rules"
 	defaultClaude   = "claude"
@@ -73,8 +73,13 @@ func applyReport(ctx context.Context, opts options, ruleName, file string) (lint
 	if err != nil {
 		return withError(pending, err), err
 	}
+	base, err := rule.LoadBase(opts.rulesDir)
+	if err != nil {
+		return withError(pending, err), err
+	}
 	report, err := lint.Apply(ctx, claudecli.Exec(opts.claude), lint.Options{
 		Rule:   r,
+		Base:   base,
 		File:   file,
 		Votes:  opts.votes,
 		Model:  opts.model,
@@ -135,6 +140,12 @@ func selftestResults(ctx context.Context, opts options, ruleName string) (selfte
 		return selftestOpts, nil, err
 	}
 	selftestOpts.Rule = r
+
+	base, err := rule.LoadBase(opts.rulesDir)
+	if err != nil {
+		return selftestOpts, nil, err
+	}
+	selftestOpts.Base = base
 
 	fixtures, err := rule.LoadFixtures(r)
 	if err != nil {

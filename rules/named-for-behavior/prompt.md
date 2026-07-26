@@ -1,5 +1,6 @@
 ---
 include_source: false
+granularity: test
 ---
 A test's name must say which behaviour breaks when the test fails. A reader who sees
 only the failing name scroll past in CI output — without opening the file — should
@@ -46,10 +47,28 @@ Judge the name against the behaviour the body actually establishes. If the body
 pins down a specific outcome and the name reports it, the test satisfies the rule
 even if the wording is terse.
 
-Go tests come in many shapes: table-driven with a slice of cases, subtests declared
-with `t.Run`, plain linear arrange/act/assert tests, and functional or integration
-tests that drive a real system end to end. Shape is not the subject of this rule and
-carries no penalty. A table-driven test is not a violation of anything — judge the
-single behaviour its cases collectively pin down and ask whether the test function's
-name states that behaviour. Case labels and `t.Run` strings inside the function are
-not what is under judgement here; the test function's own name is.
+When the unit is a function with a case — `TestParseConfig (rejects input with no
+separator)` — every shape above is judged against the whole identifier, never the
+function name alone. The two halves share the work and either one may do it: the
+function may state the behaviour and leave the case to vary the input, or the
+function may be a bare namespace and the case may carry the claim.
+
+A case name QUALIFIES when the composite states a behaviour:
+
+- `TestParseConfig (extracts host before colon)` and `TestParseConfig (rejects input
+  with no separator)`. The function names the unit, the case makes the claim, and a
+  reader who sees only that line fail in CI knows what regressed.
+- `TestTrimsSurroundingWhitespaceFromEachTag (leading spaces)`. The function already
+  states the behaviour and the case only varies the input, which is what a table is
+  for. A case is not required to restate a behaviour its function has already stated.
+
+A case name is DISQUALIFIED when:
+
+- **Neither half states a behaviour.** `TestParseConfig (host and port)` and
+  `TestParseConfig (missing port)`. The function names the unit under test, the cases
+  name the input, and nothing anywhere says what the code should do with it. A reader
+  seeing either line fail learns only which function was involved.
+- **The case is numbered or lettered.** `case 1`, `first`, `b`, `variant 3`. These are
+  disqualified for the same reason `TestParse2` is: the label separates this case from
+  its siblings and says nothing about what it protects. A case label that names neither
+  the behaviour nor the input it varies fails whatever the function is called.
