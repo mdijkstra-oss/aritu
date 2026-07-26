@@ -65,6 +65,13 @@ internal/parser/parser_test.go
 agreement that it does not, and `!` a split — the only outcome where the count is
 shown, because that is the case where the number says something the mark cannot.
 
+Each block is printed as it finishes rather than at the end, so a sweep of any
+size shows its verdicts as they land. They still print in reading order: a file
+whose rules are all judged waits for the file above it, so the same run always
+reports the same way rather than in whichever order the model happened to answer.
+The line naming what the sweep covers goes to stderr before the first call, so a
+redirected run captures the report alone and still shows a person it has started.
+
 Colour goes to a terminal and nowhere else: a pipe, a redirect or `NO_COLOR` all
 get plain text, so what you capture is what you read.
 

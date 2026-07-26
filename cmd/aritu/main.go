@@ -163,7 +163,7 @@ func validate(cli CLI) error {
 	if cli.Votes < 1 {
 		return fmt.Errorf("votes must be at least 1, got %d", cli.Votes)
 	}
-	if _, isKnown := outputWriters[cli.Output]; !isKnown {
+	if _, isKnown := reporters[cli.Output]; !isKnown {
 		return fmt.Errorf("unknown output %q, want pretty or json", cli.Output)
 	}
 	if !isKnownEffort(cli.Effort) {
@@ -202,12 +202,15 @@ func commandFor(name string) command {
 func runApply(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
 	started := time.Now()
 	opts, setupErr := applyOptions(cli)
+	report := reporterFor(cli.Output, stdout, wantsColour(stdout))
 
 	var results []run.Result
 	if setupErr == nil {
+		run.Announce(stderr, opts)
+		opts.Observe = report.observe
 		results = run.Run(ctx, askFor(cli), opts)
 	}
-	if err := writeResults(stdout, cli.Output, sweep{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
+	if err := report.finish(sweep{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
 		fmt.Fprintf(stderr, "aritu apply: %v\n", err)
 		return lint.ExitError
 	}
@@ -371,21 +374,52 @@ type sweep struct {
 	Elapsed time.Duration
 }
 
-var outputWriters = map[string]func(io.Writer, sweep) error{
-	"pretty": writeSweepPretty,
-	"json":   writeSweepJSON,
+// reporter is one output format at both its moments: what it writes as targets
+// finish, and what it writes once the sweep is over. Holding both on the struct
+// keeps the choice of format a table lookup rather than a branch at each moment.
+type reporter struct {
+	observe func(run.Result)
+	finish  func(sweep) error
 }
 
-func writeResults(w io.Writer, format string, s sweep) error {
-	write, isKnown := outputWriters[format]
+var reporters = map[string]func(io.Writer, bool) reporter{
+	"pretty": prettyReporter,
+	"json":   jsonReporter,
+}
+
+func reporterFor(format string, w io.Writer, colour bool) reporter {
+	build, isKnown := reporters[format]
 	if !isKnown {
 		panic(fmt.Sprintf("output %q reached the reporter without being validated", format))
 	}
-	return write(w, s)
+	return build(w, colour)
 }
 
-func writeSweepPretty(w io.Writer, s sweep) error {
-	return run.Format(w, s.Results, s.Options, s.Elapsed, wantsColour(w))
+// prettyReporter writes each target's block as it finishes and closes with the
+// summary. The first write that failed is the one reported: a closed pipe would
+// otherwise be announced once per remaining target.
+func prettyReporter(w io.Writer, colour bool) reporter {
+	stream := run.NewReporter(w, colour)
+	var first error
+	return reporter{
+		observe: func(result run.Result) {
+			if first == nil {
+				first = stream.Result(result)
+			}
+		},
+		finish: func(s sweep) error {
+			if first != nil {
+				return first
+			}
+			return stream.Summary(s.Results, s.Options, s.Elapsed)
+		},
+	}
+}
+
+// jsonReporter writes nothing until the run is over. One envelope covering every
+// report is a single document, and half a document is not parseable.
+func jsonReporter(w io.Writer, _ bool) reporter {
+	return reporter{finish: func(s sweep) error { return writeSweepJSON(w, s) }}
 }
 
 func writeSweepJSON(w io.Writer, s sweep) error {

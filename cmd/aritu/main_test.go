@@ -152,6 +152,13 @@ func TestExecute(t *testing.T) {
 			wantStdout: []string{"alpha_test.go", "solo", "✓ TestDoesAThing", "1 passed"},
 		},
 		{
+			name:       "a sweep says what it covers before its first model call",
+			args:       []string{"apply", "--rules", twoRules, "--claude", satisfiedClaude, alpha},
+			want:       lint.ExitPass,
+			wantStdout: []string{"alpha_test.go", "first", "second"},
+			wantStderr: []string{"judging 1 file against 2 rules, 1 vote"},
+		},
+		{
 			name:       "a unit falling short of its rule",
 			args:       []string{"apply", "--rules", soloRules, "--claude", dissatisfiedClaude, alpha},
 			want:       lint.ExitFail,

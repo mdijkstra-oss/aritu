@@ -22,6 +22,11 @@ type Options struct {
 	Votes  int
 	Model  string
 	Effort string
+
+	// Observe is handed each target as it finishes, in the order Format prints
+	// them. Calls are serial, so an implementation writing to a terminal needs no
+	// lock of its own.
+	Observe func(Result)
 }
 
 // Result is one file judged against one rule.
@@ -47,6 +52,7 @@ type Envelope struct {
 func Run(ctx context.Context, ask claudecli.Ask, opts Options) []Result {
 	results := make([]Result, len(opts.Files)*len(opts.Rules))
 	leaves := newLeafCache()
+	landed := make(chan int, len(results))
 	var wg sync.WaitGroup
 	for f, file := range opts.Files {
 		for r, judged := range opts.Rules {
@@ -55,11 +61,46 @@ func Run(ctx context.Context, ask claudecli.Ask, opts Options) []Result {
 			go func() {
 				defer wg.Done()
 				results[at] = judge(ctx, ask, leaves, targetFor(opts, judged, file))
+				landed <- at
 			}()
 		}
 	}
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(landed)
+	}()
+	observeInOrder(landed, results, orNoop(opts.Observe))
 	return results
+}
+
+// observeInOrder hands each finished target to the observer in the order Format
+// prints them, holding one back while a target printed above it is still running.
+// Handing them over as they land would order a report by whichever call the model
+// answered first, so the same run would print its files in a different order every
+// time. Draining until the channel closes is what waits for the workers.
+func observeInOrder(landed <-chan int, results []Result, observe func(Result)) {
+	hasLanded := make([]bool, len(results))
+	next := 0
+	for at := range landed {
+		hasLanded[at] = true
+		for isLanded(hasLanded, next) {
+			observe(results[next])
+			next++
+		}
+	}
+}
+
+func isLanded(hasLanded []bool, at int) bool {
+	return at < len(hasLanded) && hasLanded[at]
+}
+
+// orNoop keeps the ordering loop free of a nil check per target: a run nobody is
+// watching still has to drain the channel.
+func orNoop(observe func(Result)) func(Result) {
+	if observe != nil {
+		return observe
+	}
+	return func(Result) {}
 }
 
 // ExitFor derives the exit status across every target. ExitError outranks
@@ -82,20 +123,72 @@ func ExitFor(results []Result) lint.Exit {
 // Format renders the results grouped by file and then by rule, because the reader
 // is looking at their own code rather than at the rule set. Elapsed is the wall
 // clock for the whole run.
+//
+// It is one pass of the same Reporter a watched run feeds a result at a time, so
+// a sweep prints the same bytes whether it was rendered as it went or at the end.
 func Format(w io.Writer, results []Result, opts Options, elapsed time.Duration, colour bool) error {
-	var b strings.Builder
-	for _, group := range groupsOf(results) {
-		b.WriteString(group.File + "\n")
-		for _, result := range group.Results {
-			if err := writeResult(&b, result, colour); err != nil {
-				return err
-			}
+	reporter := NewReporter(w, colour)
+	for _, result := range results {
+		if err := reporter.Result(result); err != nil {
+			return err
 		}
 	}
-	writeSummary(&b, results, opts, elapsed)
+	return reporter.Summary(results, opts, elapsed)
+}
 
-	_, err := io.WriteString(w, b.String())
+// Reporter writes a report one target at a time, opening a file heading whenever
+// the file changes. A sweep of any size is otherwise silent until its last model
+// call returns, which reads exactly like a hung CLI.
+//
+// Results have to arrive in the order Format prints them, which is the order Run
+// observes them in.
+type Reporter struct {
+	w          io.Writer
+	colour     bool
+	file       string
+	hasWritten bool
+}
+
+// NewReporter renders to w. Nothing is written until the first result arrives, so
+// a run that could not start prints no heading it never earned.
+func NewReporter(w io.Writer, colour bool) *Reporter {
+	return &Reporter{w: w, colour: colour}
+}
+
+// Result writes one target's block.
+func (r *Reporter) Result(result Result) error {
+	var b strings.Builder
+	if r.startsNewFile(result.Report.File) {
+		fmt.Fprintf(&b, "%s\n", result.Report.File)
+		r.file = result.Report.File
+		r.hasWritten = true
+	}
+	if err := writeResult(&b, result, r.colour); err != nil {
+		return err
+	}
+	_, err := io.WriteString(r.w, b.String())
 	return err
+}
+
+// Summary closes the run with the one line that answers what the whole sweep did.
+func (r *Reporter) Summary(results []Result, opts Options, elapsed time.Duration) error {
+	var b strings.Builder
+	writeSummary(&b, results, opts, elapsed)
+	_, err := io.WriteString(r.w, b.String())
+	return err
+}
+
+// Announce says what a sweep covers before its first model call, so the wait for
+// the first file to land is not spent wondering whether anything is happening.
+// It names no file: which files are in flight cannot be shown without redrawing,
+// and each one names itself when its block lands.
+func Announce(w io.Writer, opts Options) {
+	fmt.Fprintf(w, "judging %s against %s, %s\n\n",
+		plural(len(opts.Files), "file"), plural(len(opts.Rules), "rule"), plural(opts.Votes, "vote"))
+}
+
+func (r *Reporter) startsNewFile(file string) bool {
+	return !r.hasWritten || r.file != file
 }
 
 // EnvelopeOf collects the reports for JSON output, in the same order Format prints.
@@ -199,29 +292,6 @@ func (c *leafCache) entryFor(file string) *leafEntry {
 		c.entries[file] = entry
 	}
 	return entry
-}
-
-type fileGroup struct {
-	File    string
-	Results []Result
-}
-
-// groupsOf splits the results into consecutive runs of one file. Run already
-// orders them by file, so grouping never reorders what the caller was handed.
-func groupsOf(results []Result) []fileGroup {
-	groups := make([]fileGroup, 0, len(results))
-	for _, result := range results {
-		if startsNewFile(groups, result.Report.File) {
-			groups = append(groups, fileGroup{File: result.Report.File})
-		}
-		last := &groups[len(groups)-1]
-		last.Results = append(last.Results, result)
-	}
-	return groups
-}
-
-func startsNewFile(groups []fileGroup, file string) bool {
-	return len(groups) == 0 || groups[len(groups)-1].File != file
 }
 
 func writeResult(b *strings.Builder, result Result, colour bool) error {

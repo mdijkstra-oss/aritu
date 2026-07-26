@@ -211,6 +211,179 @@ func TestRunJudgesAFileGranularityRuleWithoutEnumerating(t *testing.T) {
 	}})
 }
 
+func TestRunHandsEachTargetOverInReportOrder(t *testing.T) {
+	alpha := target{name: "alpha_test.go", leaves: []string{"TestAlpha (host)"}}
+	beta := target{name: "beta_test.go", leaves: []string{"TestBeta"}}
+
+	tests := []struct {
+		name    string
+		rules   []rule.Rule
+		targets []target
+		want    []string
+	}{
+		{
+			name:    "a file that finished first still waits for the file printed above it",
+			rules:   []rule.Rule{byBehaviour, oneReason},
+			targets: []target{alpha.after(40 * time.Millisecond), beta},
+			want: []string{
+				"named-for-behavior over alpha_test.go",
+				"one-reason-to-fail over alpha_test.go",
+				"named-for-behavior over beta_test.go",
+				"one-reason-to-fail over beta_test.go",
+			},
+		},
+		{
+			name:    "every rule over one file is handed over once",
+			rules:   []rule.Rule{byBehaviour, oneReason, noMocking},
+			targets: []target{alpha},
+			want: []string{
+				"named-for-behavior over alpha_test.go",
+				"one-reason-to-fail over alpha_test.go",
+				"no-mocking-under-test over alpha_test.go",
+			},
+		},
+		{
+			name:    "a target that could not run is handed over like any other",
+			rules:   []rule.Rule{byBehaviour},
+			targets: []target{{name: "gone_test.go", missing: true}, beta},
+			want: []string{
+				"named-for-behavior over gone_test.go",
+				"named-for-behavior over beta_test.go",
+			},
+		},
+		{
+			name:    "a run over nothing hands nothing over",
+			rules:   []rule.Rule{byBehaviour},
+			targets: nil,
+			want:    nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := writeCorpus(t, tc.targets)
+			table := &model{files: answers, rules: tc.rules, enumerations: map[string]int{}}
+			var observed []string
+			opts := Options{
+				Rules: tc.rules, Files: pathsOf(answers), Votes: 1, Model: "sonnet",
+				Observe: func(result Result) {
+					observed = append(observed, fmt.Sprintf("%s over %s", result.Report.Rule, filepath.Base(result.Report.File)))
+				},
+			}
+
+			results := Run(context.Background(), table.ask, opts)
+
+			if !slices.Equal(observed, tc.want) {
+				t.Errorf("observed %v, want %v", observed, tc.want)
+			}
+			if len(observed) != len(results) {
+				t.Errorf("observed %d of %d results", len(observed), len(results))
+			}
+		})
+	}
+}
+
+// TestReporterWritesEachResultAsItArrives feeds one reporter in sequence, because
+// what it writes for a result depends on the file the result before it carried.
+func TestReporterWritesEachResultAsItArrives(t *testing.T) {
+	passing := func(name, file string, elapsed time.Duration, unit string) Result {
+		return Result{
+			Report: lint.Report{
+				Rule: name, File: file, Votes: 2,
+				Verdicts: map[string]int{unit: 2},
+			},
+			Duration: elapsed,
+		}
+	}
+
+	steps := []struct {
+		name   string
+		result Result
+		want   string
+	}{
+		{
+			name:   "the first result opens its file heading",
+			result: passing("named-for-behavior", "alpha_test.go", 100*time.Millisecond, "TestAlpha"),
+			want: "alpha_test.go\n" +
+				"  named-for-behavior  100ms\n" +
+				"    ✓ TestAlpha\n" +
+				"\n" +
+				"    1 passed  ·  1 unit, 2 votes\n" +
+				"\n",
+		},
+		{
+			name:   "a second rule over the same file writes no second heading",
+			result: passing("one-reason-to-fail", "alpha_test.go", 400*time.Millisecond, "TestAlpha"),
+			want: "  one-reason-to-fail  400ms\n" +
+				"    ✓ TestAlpha\n" +
+				"\n" +
+				"    1 passed  ·  1 unit, 2 votes\n" +
+				"\n",
+		},
+		{
+			name:   "the next file opens a heading of its own",
+			result: passing("named-for-behavior", "beta_test.go", 300*time.Millisecond, "TestBeta"),
+			want: "beta_test.go\n" +
+				"  named-for-behavior  300ms\n" +
+				"    ✓ TestBeta\n" +
+				"\n" +
+				"    1 passed  ·  1 unit, 2 votes\n" +
+				"\n",
+		},
+	}
+
+	var out bytes.Buffer
+	reporter := NewReporter(&out, false)
+	for _, step := range steps {
+		t.Run(step.name, func(t *testing.T) {
+			out.Reset()
+
+			if err := reporter.Result(step.result); err != nil {
+				t.Fatalf("Result returned %v", err)
+			}
+
+			if out.String() != step.want {
+				t.Errorf("wrote:\n%s\nwant:\n%s", out.String(), step.want)
+			}
+		})
+	}
+}
+
+func TestAnnounceSaysWhatTheSweepCovers(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{
+			name: "one file against one rule reads in the singular",
+			opts: Options{Rules: []rule.Rule{byBehaviour}, Files: []string{"alpha_test.go"}, Votes: 1},
+			want: "judging 1 file against 1 rule, 1 vote\n\n",
+		},
+		{
+			name: "a sweep names its counts before any of it has run",
+			opts: Options{
+				Rules: []rule.Rule{byBehaviour, oneReason},
+				Files: []string{"alpha_test.go", "beta_test.go", "gamma_test.go"},
+				Votes: 4,
+			},
+			want: "judging 3 files against 2 rules, 4 votes\n\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+
+			Announce(&out, tc.opts)
+
+			if out.String() != tc.want {
+				t.Errorf("Announce wrote %q, want %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestExitFor(t *testing.T) {
 	passing := Result{Report: lint.Report{Votes: 2, Verdicts: map[string]int{"TestAlpha": 2}}}
 	failing := Result{Report: lint.Report{Votes: 2, Verdicts: map[string]int{"TestAlpha": 0}}}
