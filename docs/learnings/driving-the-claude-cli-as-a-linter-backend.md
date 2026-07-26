@@ -1,10 +1,14 @@
 # Driving the Claude CLI as a linter backend
 
-Measured against `claude 2.1.220` on 2026-07-26 while building the first pass of
-aritu. Every number below came from an actual invocation, not from reasoning
+Measured against `claude 2.1.220` on 2026-07-26 while building aritu. Every number
+and every error string below came from an actual invocation, not from reasoning
 about the CLI.
 
-## Dynamic-key JSON schemas are unusable
+The test for anything in this file is whether it stays true when aritu changes.
+Facts about the CLI, the API and the model belong here; snapshots of our own output
+do not, because re-running the tool is faster and cannot be out of date.
+
+## Open-ended key schemas fail; generated fixed-key schemas do not
 
 The spec sketched the model's reply as a map from test name to verdict:
 
@@ -12,8 +16,9 @@ The spec sketched the model's reply as a map from test name to verdict:
 { "testFuncA": true, "testFuncB": false }
 ```
 
-Expressed as a schema that is an object with `additionalProperties`, and the CLI
-cannot produce it. The call burns all five structured-output retries and dies:
+Expressed as an object with `additionalProperties`, so the model invents the keys,
+the CLI cannot produce it. The call burns all five structured-output retries and
+dies:
 
 ```
 "terminal_reason": "structured_output_retry_exhausted"
@@ -22,17 +27,51 @@ cannot produce it. The call burns all five structured-output retries and dies:
 
 118 seconds and $0.27 for a failed call on a five-line file.
 
-Rephrased as an **array of fixed-key objects**, the same question succeeds on the
-first attempt in 2.5s:
+**The conclusion first drawn from that was too broad, and it stood for a while
+before being caught: "dynamic-key schemas do not work."** What actually fails is
+asking the model to *invent* the keys. When the key set is already known — and for
+a verdict call it is, because a separate call enumerated the units a moment
+earlier — the schema can name every key explicitly:
 
 ```json
-{ "results": [ { "name": "TestAlpha", "satisfies": true } ] }
+{ "type": "object",
+  "properties": { "TestParseConfig.host_and_port": { "type": "object", ... } },
+  "required": ["TestParseConfig.host_and_port"],
+  "additionalProperties": false }
 ```
 
-So schemas want fixed keys. The map shape the spec describes is still what the
-tool prints — it is just rebuilt in Go from the array rather than demanded from
-the model. Where a schema and a desired output shape disagree, convert on our
-side; the model is far better at filling a fixed shape than at inventing keys.
+Generated a millisecond before the call, and indistinguishable from a hand-written
+schema as far as the model is concerned. That works, and it is strictly better than
+the array shape: an object cannot repeat a key, cannot omit a required one and
+cannot carry an extra one, so duplicated, dropped and invented units stop being
+errors the caller detects and become schema violations the CLI retries by itself.
+
+The general lesson is not about schemas. A single measurement supports a narrow
+claim. "This schema shape failed" was the observation; "this class of schema is
+unusable" was an invention laid on top of it, and it closed off the better design
+until someone pushed back.
+
+## Schema property keys are constrained, and the error says so
+
+A generated key like `TestParseConfig:extracts_host_before_colon` is rejected:
+
+```
+API Error: 400 input_schema.properties:
+Property keys should match pattern '^[a-zA-Z0-9_.-]{1,64}$'
+```
+
+So: letters, digits, underscore, dot, hyphen, and **64 characters at most**. No
+colons, no slashes, no spaces. Two consequences worth knowing before designing a
+key scheme:
+
+- A human-readable identifier cannot be the key. `TestFoo (some case name)` has
+  spaces and parentheses; a file path has slashes. Both need normalising, which
+  makes normalisation load-bearing rather than cosmetic.
+- 64 characters is shorter than it sounds once a key is a function name plus a case
+  name. Truncation is unavoidable, and truncation manufactures collisions between
+  keys that were distinct — long case names in one function tend to share a prefix.
+  Whatever disambiguates them has to live inside the same character set, so Go's
+  own `#01` convention for duplicate subtests is not available.
 
 ## The default system prompt dominates the bill
 
