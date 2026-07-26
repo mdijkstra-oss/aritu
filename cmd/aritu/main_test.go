@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -110,13 +111,13 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "apply still reports when the rule cannot be loaded",
-			args:       []string{"apply", "--rules", emptyRules, "no-such-rule", "parser_test.go"},
+			args:       []string{"apply", "--output", "json", "--rules", emptyRules, "no-such-rule", "parser_test.go"},
 			want:       lint.ExitError,
-			wantStdout: []string{`"rule": "no-such-rule"`, `"file": "parser_test.go"`, `"votes": 2`, `"verdicts": {}`, `"error"`, "no-such-rule"},
+			wantStdout: []string{`"rule": "no-such-rule"`, `"file": "parser_test.go"`, fmt.Sprintf(`"votes": %d`, defaultVotes), `"verdicts": {}`, `"error"`, "no-such-rule"},
 		},
 		{
 			name:       "apply still reports when the model cannot be reached",
-			args:       []string{"apply", "--rules", soloRules, "--claude", failingClaude, "--votes", "1", "solo", soloFixture},
+			args:       []string{"apply", "--output", "json", "--rules", soloRules, "--claude", failingClaude, "--votes", "1", "solo", soloFixture},
 			want:       lint.ExitError,
 			wantStdout: []string{`"rule": "solo"`, `"votes": 1`, `"verdicts": {}`, `"error"`, "exit status 1"},
 		},
@@ -129,7 +130,7 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "apply reports a rules directory with no shared base prompt",
-			args:       []string{"apply", "--rules", baselessRules, "solo", "parser_test.go"},
+			args:       []string{"apply", "--output", "json", "--rules", baselessRules, "solo", "parser_test.go"},
 			want:       lint.ExitError,
 			wantStdout: []string{`"error"`, "base prompt", "base.md"},
 		},
@@ -139,6 +140,24 @@ func TestRun(t *testing.T) {
 			want:       lint.ExitError,
 			wantStdout: []string{"FIXTURE"},
 			wantStderr: []string{"base prompt", "base.md"},
+		},
+		{
+			name:       "apply renders pretty by default",
+			args:       []string{"apply", "--rules", emptyRules, "no-such-rule", "parser_test.go"},
+			want:       lint.ExitError,
+			wantStdout: []string{"no-such-rule", "could not run"},
+		},
+		{
+			name:       "apply renders json when asked",
+			args:       []string{"apply", "--output", "json", "--rules", emptyRules, "no-such-rule", "parser_test.go"},
+			want:       lint.ExitError,
+			wantStdout: []string{`"rule": "no-such-rule"`, `"verdicts": {}`, `"error"`},
+		},
+		{
+			name:       "an unknown output is refused before any model is called",
+			args:       []string{"apply", "--output", "yaml", "one-reason-to-fail", "parser_test.go"},
+			want:       lint.ExitError,
+			wantStderr: []string{`unknown output "yaml"`, "pretty or json"},
 		},
 		{
 			name:       "selftest still prints its table when the model cannot be reached",
@@ -226,6 +245,7 @@ func TestParseOptions(t *testing.T) {
 		model:    defaultModel,
 		votes:    defaultVotes,
 		effort:   defaultEffort,
+		output:   defaultOutput,
 		jobs:     defaultJobs,
 		rulesDir: defaultRulesDir,
 		claude:   defaultClaude,
@@ -259,6 +279,8 @@ func TestParseOptions(t *testing.T) {
 			want: withArgs(options{
 				model:    "opus",
 				votes:    2,
+				effort:   defaultEffort,
+				output:   defaultOutput,
 				jobs:     defaultJobs,
 				rulesDir: defaultRulesDir,
 				claude:   defaultClaude,
@@ -273,6 +295,8 @@ func TestParseOptions(t *testing.T) {
 			want: withArgs(options{
 				model:    "opus",
 				votes:    2,
+				effort:   defaultEffort,
+				output:   defaultOutput,
 				jobs:     defaultJobs,
 				rulesDir: defaultRulesDir,
 				claude:   defaultClaude,
@@ -288,6 +312,7 @@ func TestParseOptions(t *testing.T) {
 				model:    defaultModel,
 				votes:    defaultVotes,
 				effort:   "high",
+				output:   defaultOutput,
 				jobs:     defaultJobs,
 				rulesDir: defaultRulesDir,
 				claude:   defaultClaude,
@@ -303,6 +328,7 @@ func TestParseOptions(t *testing.T) {
 				model:    "haiku",
 				votes:    7,
 				effort:   "low",
+				output:   defaultOutput,
 				jobs:     3,
 				rulesDir: "/etc/aritu/rules",
 				claude:   "/usr/local/bin/claude",
@@ -420,7 +446,7 @@ func TestWithError(t *testing.T) {
 	}
 }
 
-func TestWriteReport(t *testing.T) {
+func TestWriteReportRendersJSONForAParser(t *testing.T) {
 	report := lint.Report{
 		Rule:     "one-reason-to-fail",
 		File:     "parser_test.go",
@@ -439,11 +465,24 @@ func TestWriteReport(t *testing.T) {
 `
 
 	var stdout bytes.Buffer
-	if err := writeReport(&stdout, report); err != nil {
+	if err := writeReport(&stdout, "json", report); err != nil {
 		t.Fatalf("writeReport returned error %v", err)
 	}
 
 	if stdout.String() != want {
 		t.Errorf("writeReport wrote:\n%s\nwant:\n%s", stdout.String(), want)
+	}
+}
+
+func TestWriteReportRefusesAnUnknownFormat(t *testing.T) {
+	var stdout bytes.Buffer
+
+	err := writeReport(&stdout, "yaml", lint.Report{Rule: "demo", Votes: 2})
+
+	if err == nil || !strings.Contains(err.Error(), `unknown output "yaml"`) {
+		t.Fatalf("writeReport error = %v, want one naming the unknown format", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("writeReport wrote %q for a format it cannot render", stdout.String())
 	}
 }

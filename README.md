@@ -29,7 +29,32 @@ aritu apply one-reason-to-fail internal/parser/parser_test.go
 aritu selftest one-reason-to-fail --votes 4
 ```
 
-`apply` prints the counts as JSON:
+`apply` prints a report:
+
+```
+named-for-behavior  internal/parser/parser_test.go
+
+  TestParseConfig
+    ✓ extracts host before colon
+    ! rejects blank input (1 of 2)
+      one run read the name as stating an outcome and one did not
+    ✗ host and port
+      names the input the case supplies rather than the outcome it protects
+
+  ✓ TestSlugify
+
+  2 passed  ·  2 failed  ·  1 split  ·  4 units, 2 votes
+```
+
+Units group under the function that declares them. `✓` is unanimous agreement that
+the unit satisfies the rule, `✗` unanimous agreement that it does not, and `!` a
+split — the only outcome where the count is shown, because that is the case where
+the number says something the mark cannot.
+
+Colour goes to a terminal and nowhere else: a pipe, a redirect or `NO_COLOR` all
+get plain text, so what you capture is what you read.
+
+`--output json` gives the same report as data:
 
 ```json
 {
@@ -42,7 +67,7 @@ aritu selftest one-reason-to-fail --votes 4
   },
   "reasons": {
     "TestParseConfig (host and port)": [
-      "names the input the case supplies rather than the outcome it protects, so a reader seeing it fail learns nothing about what regressed"
+      "names the input the case supplies rather than the outcome it protects"
     ]
   }
 }
@@ -201,6 +226,7 @@ costs nothing to know and cannot be disagreed with.
 | flag | default | |
 |---|---|---|
 | `--model` | `sonnet` | model passed to the claude CLI |
+| `--output` | `pretty` | `pretty` for reading, `json` for parsing |
 | `--votes` | `2` | rounds that must all agree before a unit passes |
 | `--jobs` | `5` | model calls allowed in flight at once |
 | `--effort` | — | reasoning effort; empty leaves the CLI default |

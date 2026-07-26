@@ -18,12 +18,13 @@ import (
 
 const (
 	defaultModel    = "sonnet"
-	defaultVotes    = 2
-	defaultEffort   = ""
+	defaultVotes    = 1
+	defaultEffort   = "medium"
 	defaultRulesDir = "./rules"
 	defaultClaude   = "claude"
 	defaultTimeout  = 10 * time.Minute
 	defaultJobs     = 5
+	defaultOutput   = "pretty"
 )
 
 func main() {
@@ -58,7 +59,7 @@ func runApply(args []string, stdout, stderr io.Writer) lint.Exit {
 	defer cancel()
 
 	report, applyErr := applyReport(ctx, opts, opts.args[0], opts.args[1])
-	if err := writeReport(stdout, report); err != nil {
+	if err := writeReport(stdout, opts.output, report); err != nil {
 		fmt.Fprintf(stderr, "aritu apply: %v\n", err)
 		return lint.ExitError
 	}
@@ -106,13 +107,41 @@ func withError(r lint.Report, err error) lint.Report {
 	return r
 }
 
-func writeReport(w io.Writer, r lint.Report) error {
+var reportWriters = map[string]func(io.Writer, lint.Report) error{
+	"pretty": func(w io.Writer, r lint.Report) error { return lint.Format(w, r, wantsColour(w)) },
+	"json":   writeReportJSON,
+}
+
+func writeReport(w io.Writer, format string, r lint.Report) error {
+	write, isKnown := reportWriters[format]
+	if !isKnown {
+		return fmt.Errorf("unknown output %q, want pretty or json", format)
+	}
+	return write(w, r)
+}
+
+func writeReportJSON(w io.Writer, r lint.Report) error {
 	encoded, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(w, "%s\n", encoded)
 	return err
+}
+
+// wantsColour keeps the decision at the boundary so the formatter stays a pure
+// function of its inputs. Escape sequences belong on a terminal and nowhere else,
+// so a pipe, a file and NO_COLOR all get plain text.
+func wantsColour(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	file, isFile := w.(*os.File)
+	if !isFile {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func runSelftest(args []string, stdout, stderr io.Writer) lint.Exit {
@@ -164,6 +193,7 @@ func selftestResults(ctx context.Context, opts options, ruleName string) (selfte
 
 type options struct {
 	model    string
+	output   string
 	votes    int
 	jobs     int
 	effort   string
@@ -185,6 +215,9 @@ func parseOptions(command string, args []string, positionals int) (options, erro
 	}
 	if len(parsed) != positionals {
 		return options{}, fmt.Errorf("expected %d positional argument(s), got %d", positionals, len(parsed))
+	}
+	if _, isKnown := reportWriters[opts.output]; !isKnown {
+		return options{}, fmt.Errorf("unknown output %q, want pretty or json", opts.output)
 	}
 	if opts.votes < 1 {
 		return options{}, fmt.Errorf("votes must be at least 1, got %d", opts.votes)
@@ -214,6 +247,7 @@ func registerFlags(fs *flag.FlagSet, opts *options) {
 	fs.StringVar(&opts.model, "model", defaultModel, "model name passed to the claude CLI")
 	fs.IntVar(&opts.votes, "votes", defaultVotes, "rounds that must all agree before a test passes")
 	fs.IntVar(&opts.jobs, "jobs", defaultJobs, "model calls allowed in flight at once")
+	fs.StringVar(&opts.output, "output", defaultOutput, "how to render the report: pretty or json")
 	fs.StringVar(&opts.effort, "effort", defaultEffort, "reasoning effort; empty leaves the CLI default")
 	fs.StringVar(&opts.rulesDir, "rules", defaultRulesDir, "directory holding one subdirectory per rule")
 	fs.StringVar(&opts.claude, "claude", defaultClaude, "claude CLI binary to invoke")
