@@ -204,8 +204,8 @@ func TestRun(t *testing.T) {
 		Model: "sonnet",
 	}
 	ask := askFrom(map[string]reply{
-		"TestGood": {names: `{"names":["TestGood"]}`, verdicts: `{"results":[{"name":"TestGood","satisfies":true}]}`},
-		"TestBad":  {names: `{"names":["TestBad"]}`, verdicts: `{"results":[{"name":"TestBad","satisfies":false}]}`},
+		"TestGood": {names: `{"names":["TestGood"]}`, verdicts: `{"TestGood":{"satisfies":true,"reason":""}}`},
+		"TestBad":  {names: `{"names":["TestBad"]}`, verdicts: `{"TestBad":{"satisfies":false,"reason":"names the unit"}}`},
 	})
 
 	results := Run(context.Background(), ask, opts, fixtures)

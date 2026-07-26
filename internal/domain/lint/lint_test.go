@@ -40,13 +40,12 @@ func Parse(raw string) error { return nil }
 	noNames   = `{"names":[]}`
 	sameName  = `{"names":["TestParsesHost","TestParsesHost"]}`
 
-	bothSatisfy = `{"results":[{"name":"TestParsesHost","satisfies":true},{"name":"TestRejectsPort","satisfies":true}]}`
-	portFails   = `{"results":[{"name":"TestParsesHost","satisfies":true},{"name":"TestRejectsPort","satisfies":false}]}`
-	noneSatisfy = `{"results":[{"name":"TestParsesHost","satisfies":false},{"name":"TestRejectsPort","satisfies":false}]}`
-	extraName   = `{"results":[{"name":"TestParsesHost","satisfies":true},{"name":"TestRejectsPort","satisfies":true},{"name":"TestGhost","satisfies":true}]}`
-	droppedName = `{"results":[{"name":"TestParsesHost","satisfies":true}]}`
-	repeatedRow = `{"results":[{"name":"TestParsesHost","satisfies":true},{"name":"TestParsesHost","satisfies":false},{"name":"TestRejectsPort","satisfies":true}]}`
-	noResults   = `{"results":[]}`
+	bothSatisfy = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":true,"reason":""}}`
+	portFails   = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":false,"reason":"names the unit"}}`
+	noneSatisfy = `{"TestParsesHost":{"satisfies":false,"reason":"host reason"},"TestRejectsPort":{"satisfies":false,"reason":"port reason"}}`
+	extraName   = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":true,"reason":""},"TestGhost":{"satisfies":true,"reason":""}}`
+	droppedName = `{"TestParsesHost":{"satisfies":true,"reason":""}}`
+	noResults   = `{}`
 )
 
 func TestApply(t *testing.T) {
@@ -133,14 +132,6 @@ func TestApply(t *testing.T) {
 			wantErr:  "missing TestRejectsPort",
 		},
 		{
-			name:     "verdict given twice for one function errors",
-			rule:     testOnly,
-			votes:    1,
-			names:    ok(bothNames),
-			verdicts: repeat(1, ok(repeatedRow)),
-			wantErr:  `"TestParsesHost" given twice`,
-		},
-		{
 			name:    "duplicate names from the name call error",
 			rule:    testOnly,
 			votes:   4,
@@ -188,7 +179,7 @@ func TestApply(t *testing.T) {
 			rule:     testOnly,
 			votes:    1,
 			names:    ok(bothNames),
-			verdicts: repeat(1, ok(`{"results":`)),
+			verdicts: repeat(1, ok(`{"TestParsesHost":`)),
 			wantErr:  "reading verdicts",
 		},
 		{
@@ -251,7 +242,7 @@ func TestApply(t *testing.T) {
 }
 
 func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
-	const bothPass = `{"results":[{"name":"TestParsesHost","reason":"","satisfies":true},{"name":"TestRejectsPort","reason":"","satisfies":true}]}`
+	const bothPass = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":true,"reason":""}}`
 
 	tests := []struct {
 		name     string
@@ -270,7 +261,7 @@ func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
 			votes: 2,
 			verdicts: []cannedReply{
 				ok(bothPass),
-				ok(`{"results":[{"name":"TestParsesHost","reason":"","satisfies":true},{"name":"TestRejectsPort","reason":"names the unit, not the outcome","satisfies":false}]}`),
+				ok(`{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":false,"reason":"names the unit, not the outcome"}}`),
 			},
 			want: map[string][]string{"TestRejectsPort": {"names the unit, not the outcome"}},
 		},
@@ -278,8 +269,8 @@ func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
 			name:  "a unanimous rejection keeps one reason per dissenting run",
 			votes: 2,
 			verdicts: []cannedReply{
-				ok(`{"results":[{"name":"TestParsesHost","reason":"first round on host","satisfies":false},{"name":"TestRejectsPort","reason":"first round on port","satisfies":false}]}`),
-				ok(`{"results":[{"name":"TestParsesHost","reason":"second round on host","satisfies":false},{"name":"TestRejectsPort","reason":"second round on port","satisfies":false}]}`),
+				ok(`{"TestParsesHost":{"satisfies":false,"reason":"first round on host"},"TestRejectsPort":{"satisfies":false,"reason":"first round on port"}}`),
+				ok(`{"TestParsesHost":{"satisfies":false,"reason":"second round on host"},"TestRejectsPort":{"satisfies":false,"reason":"second round on port"}}`),
 			},
 			want: map[string][]string{
 				"TestParsesHost":  {"first round on host", "second round on host"},
@@ -290,7 +281,7 @@ func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
 			name:  "a blank reason is dropped rather than recorded as empty",
 			votes: 1,
 			verdicts: []cannedReply{
-				ok(`{"results":[{"name":"TestParsesHost","reason":"   ","satisfies":false},{"name":"TestRejectsPort","reason":"port reason","satisfies":false}]}`),
+				ok(`{"TestParsesHost":{"satisfies":false,"reason":"   "},"TestRejectsPort":{"satisfies":false,"reason":"port reason"}}`),
 			},
 			want: map[string][]string{"TestRejectsPort": {"port reason"}},
 		},
@@ -330,7 +321,7 @@ func TestApplySkipsTheNamesCallAtFileGranularity(t *testing.T) {
 	file := filepath.Join(dir, testFileName)
 	asker := &tableAsker{
 		names:    fails(errors.New("the names call must not be made at file granularity")),
-		verdicts: repeat(2, ok(`{"results":[{"name":"FILE","reason":"","satisfies":true}]}`)),
+		verdicts: repeat(2, ok(`{"FILE":{"satisfies":true,"reason":""}}`)),
 	}
 	opts := Options{
 		Rule:  rule.Rule{Name: "shared-state", Prompt: rulePrompt, Granularity: rule.GranularityFile},
@@ -338,7 +329,7 @@ func TestApplySkipsTheNamesCallAtFileGranularity(t *testing.T) {
 		Votes: 2,
 		Model: "sonnet",
 	}
-	asker.verdicts = repeat(2, ok(fmt.Sprintf(`{"results":[{"name":%q,"reason":"","satisfies":true}]}`, file)))
+	asker.verdicts = repeat(2, ok(fmt.Sprintf(`{%q:{"satisfies":true,"reason":""}}`, UnitsFor([]string{file})[0].Key)))
 
 	report, err := Apply(context.Background(), asker.ask, opts)
 
@@ -445,7 +436,7 @@ func TestBuildVerdictPrompt(t *testing.T) {
 		{Path: "pkg/parser_test.go", Content: testFileSource},
 		{Path: "pkg/parser.go", Content: sourceFileSource},
 	}
-	units := []string{"TestParsesHost", "TestRejectsPort (empty input)"}
+	units := UnitsFor([]string{"TestParsesHost", "TestRejectsPort (empty input)"})
 	prompt := BuildVerdictPrompt(base, "\n\n"+rulePrompt+"\n", files, units)
 
 	t.Run("base prompt comes first", func(t *testing.T) {
@@ -464,9 +455,10 @@ func TestBuildVerdictPrompt(t *testing.T) {
 		name string
 		want string
 	}{
-		{"demands one entry per unit", "exactly one entry per unit"},
-		{"lists the plain function unit", "- TestParsesHost"},
-		{"lists the leaf unit", "- TestRejectsPort (empty input)"},
+		{"names the key to answer under", "the key to answer under"},
+		{"judges the unit as written rather than the key", "as written on the left"},
+		{"lists the plain function unit against itself", "- TestParsesHost   ->   TestParsesHost"},
+		{"lists the leaf unit against its key", "- TestRejectsPort (empty input)   ->   TestRejectsPort.empty_input"},
 		{"names the test file", "pkg/parser_test.go"},
 		{"carries the test file contents", "func TestParsesHost(t *testing.T) {}"},
 		{"names the source file", "pkg/parser.go"},
@@ -483,7 +475,7 @@ func TestBuildVerdictPrompt(t *testing.T) {
 }
 
 func TestBuildVerdictPromptOmitsAnEmptyBase(t *testing.T) {
-	prompt := BuildVerdictPrompt("  \n ", rulePrompt, []SourceFile{{Path: "a_test.go"}}, []string{"TestA"})
+	prompt := BuildVerdictPrompt("  \n ", rulePrompt, []SourceFile{{Path: "a_test.go"}}, UnitsFor([]string{"TestA"}))
 
 	if !strings.HasPrefix(prompt, rulePrompt) {
 		t.Errorf("an empty base should leave the rule body first:\n%s", prompt)
@@ -554,4 +546,110 @@ func writeFiles(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
+}
+
+func TestUnitsFor(t *testing.T) {
+	tests := []struct {
+		name  string
+		names []string
+		want  []Unit
+	}{
+		{
+			name:  "a plain test function answers under its own name",
+			names: []string{"TestParsesHost"},
+			want:  []Unit{{Name: "TestParsesHost", Key: "TestParsesHost"}},
+		},
+		{
+			name:  "a case name is snake cased behind the function name",
+			names: []string{"TestParseConfig (extracts host before colon)"},
+			want:  []Unit{{Name: "TestParseConfig (extracts host before colon)", Key: "TestParseConfig.extracts_host_before_colon"}},
+		},
+		{
+			name:  "punctuation and repeated spaces collapse to one separator",
+			names: []string{"TestParse (rejects a 24:00 clock -- politely)"},
+			want:  []Unit{{Name: "TestParse (rejects a 24:00 clock -- politely)", Key: "TestParse.rejects_a_24_00_clock_politely"}},
+		},
+		{
+			name:  "two cases that normalise alike are kept apart",
+			names: []string{"TestParse (empty input)", "TestParse (empty  input)"},
+			want: []Unit{
+				{Name: "TestParse (empty input)", Key: "TestParse.empty_input"},
+				{Name: "TestParse (empty  input)", Key: "TestParse.empty_input-01"},
+			},
+		},
+		{
+			name:  "a case with nothing to normalise still gets a key",
+			names: []string{"TestParse (!!!)"},
+			want:  []Unit{{Name: "TestParse (!!!)", Key: "TestParse.case"}},
+		},
+		{
+			name:  "a file path is sanitised into the key character set",
+			names: []string{"internal/parser/parser_test.go"},
+			want:  []Unit{{Name: "internal/parser/parser_test.go", Key: "internal_parser_parser_test.go"}},
+		},
+		{
+			name:  "a key longer than the API allows is cut to the ceiling",
+			names: []string{"TestSelftestStillPrintsItsTable (when the model cannot be reached at all today)"},
+			want: []Unit{{
+				Name: "TestSelftestStillPrintsItsTable (when the model cannot be reached at all today)",
+				Key:  "TestSelftestStillPrintsItsTable.when_the_model_cannot_be_reached",
+			}},
+		},
+		{
+			name:  "the same function with different cases keeps them distinct",
+			names: []string{"TestParse (accepts a port)", "TestParse (rejects a port)"},
+			want: []Unit{
+				{Name: "TestParse (accepts a port)", Key: "TestParse.accepts_a_port"},
+				{Name: "TestParse (rejects a port)", Key: "TestParse.rejects_a_port"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := UnitsFor(tc.names)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("UnitsFor(%q) = %+v, want %+v", tc.names, got, tc.want)
+			}
+			for _, unit := range got {
+				if len(unit.Key) > maxKeyLength {
+					t.Errorf("key %q is %d chars, over the API ceiling of %d", unit.Key, len(unit.Key), maxKeyLength)
+				}
+			}
+		})
+	}
+}
+
+func TestVerdictSchemaForNamesEveryKeyAndForbidsAnyOther(t *testing.T) {
+	units := UnitsFor([]string{"TestParsesHost", "TestParse (empty input)"})
+
+	raw := VerdictSchemaFor(units)
+
+	var schema struct {
+		Type                 string                     `json:"type"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+		Required             []string                   `json:"required"`
+		AdditionalProperties bool                       `json:"additionalProperties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("schema is not valid JSON: %v", err)
+	}
+
+	wantKeys := []string{"TestParsesHost", "TestParse.empty_input"}
+	if !slices.Equal(slices.Sorted(maps.Keys(schema.Properties)), slices.Sorted(slices.Values(wantKeys))) {
+		t.Errorf("properties = %v, want %v", slices.Sorted(maps.Keys(schema.Properties)), wantKeys)
+	}
+	if !slices.Equal(slices.Sorted(slices.Values(schema.Required)), slices.Sorted(slices.Values(wantKeys))) {
+		t.Errorf("required = %v, want every key", schema.Required)
+	}
+	if schema.AdditionalProperties {
+		t.Error("additionalProperties is true, so the model could invent a unit the enumeration never listed")
+	}
+}
+
+func TestVerdictSchemaForEscapesAKeyRatherThanBreakingTheJSON(t *testing.T) {
+	raw := VerdictSchemaFor([]Unit{{Name: `Test"quoted`, Key: `Test_quoted`}})
+	if !json.Valid(raw) {
+		t.Fatalf("schema is not valid JSON: %s", raw)
+	}
 }

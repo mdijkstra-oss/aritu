@@ -19,6 +19,14 @@ import (
 // exists to catch.
 type Exit int
 
+// Unit is one judged thing: Name is the identifier a reader sees when it fails,
+// Key is what the model answers under. They differ because a key has to be a tidy
+// JSON property while a name has to stay exactly what CI prints.
+type Unit struct {
+	Name string
+	Key  string
+}
+
 // SourceFile is a file's path and contents as handed to the model.
 type SourceFile struct {
 	Path    string
@@ -57,9 +65,6 @@ const (
 // schemas exhaust the CLI's structured-output retries.
 const NamesSchema = `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"],"additionalProperties":false}`
 
-// VerdictSchema constrains the per-unit verdict call.
-const VerdictSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"reason":{"type":"string"},"satisfies":{"type":"boolean"}},"required":["name","reason","satisfies"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false}`
-
 // Apply votes on one file against one rule. The returned Report carries Rule,
 // File and Votes even when the error is non-nil, so the caller can always emit
 // output before exiting.
@@ -75,10 +80,11 @@ func Apply(ctx context.Context, ask claudecli.Ask, opts Options) (Report, error)
 		return report, err
 	}
 
-	units, err := listUnits(ctx, ask, opts, files[0])
+	names, err := listUnits(ctx, ask, opts, files[0])
 	if err != nil {
 		return report, err
 	}
+	units := UnitsFor(names)
 
 	judge := func(ctx context.Context, _ int) (round, error) {
 		return askVerdicts(ctx, ask, opts, files, units)
@@ -117,7 +123,7 @@ func BuildNamesPrompt(granularity rule.Granularity, test SourceFile) string {
 // listed rather than left to be re-derived: two independent enumerations of
 // twenty-five table rows will phrase one of them differently sooner or later,
 // and every such disagreement would surface as a could-not-run.
-func BuildVerdictPrompt(base, rulePrompt string, files []SourceFile, units []string) string {
+func BuildVerdictPrompt(base, rulePrompt string, files []SourceFile, units []Unit) string {
 	var b strings.Builder
 	if trimmed := strings.TrimSpace(base); trimmed != "" {
 		b.WriteString(trimmed)
@@ -125,11 +131,11 @@ func BuildVerdictPrompt(base, rulePrompt string, files []SourceFile, units []str
 	}
 	b.WriteString(strings.TrimSpace(rulePrompt))
 	b.WriteString("\n\n---\n\n")
-	b.WriteString("Judge exactly these units against the rule above:\n")
+	b.WriteString("Judge exactly these units against the rule above. Each line gives the unit, then the key to answer under:\n")
 	for _, unit := range units {
-		b.WriteString("- " + unit + "\n")
+		b.WriteString(fmt.Sprintf("- %s   ->   %s\n", unit.Name, unit.Key))
 	}
-	b.WriteString("\nReturn exactly one entry per unit listed, no more and no fewer, naming each unit exactly as written above.\n\n")
+	b.WriteString("\nJudge the unit as written on the left. The key on the right is only where the answer goes.\n\n")
 	for _, f := range files {
 		b.WriteString(formatFileBlock(f))
 		b.WriteString("\n")
@@ -179,14 +185,9 @@ type namesReply struct {
 	Names []string `json:"names"`
 }
 
-type verdictReply struct {
-	Results []verdictEntry `json:"results"`
-}
-
-type verdictEntry struct {
-	Name      string `json:"name"`
-	Reason    string `json:"reason"`
+type verdictAnswer struct {
 	Satisfies bool   `json:"satisfies"`
+	Reason    string `json:"reason"`
 }
 
 // round is one run's answer: a verdict per unit, and the model's one-line
@@ -255,35 +256,33 @@ func listUnits(ctx context.Context, ask claudecli.Ask, opts Options, test Source
 	return askNames(ctx, ask, opts, test)
 }
 
-func askVerdicts(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []string) (round, error) {
+func askVerdicts(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
 	raw, err := ask(ctx, claudecli.Request{
 		Prompt: BuildVerdictPrompt(opts.Base, opts.Rule.Prompt, files, units),
 		Model:  opts.Model,
 		Effort: opts.Effort,
-		Schema: json.RawMessage(VerdictSchema),
+		Schema: VerdictSchemaFor(units),
 	})
 	if err != nil {
 		return round{}, fmt.Errorf("judging %s against rule %s: %w", opts.File, opts.Rule.Name, err)
 	}
 
-	var reply verdictReply
-	if err := json.Unmarshal(raw, &reply); err != nil {
+	answers := map[string]verdictAnswer{}
+	if err := json.Unmarshal(raw, &answers); err != nil {
 		return round{}, fmt.Errorf("reading verdicts for %s: %w", opts.File, err)
+	}
+	if err := checkKeysMatch(units, answers, opts.File); err != nil {
+		return round{}, err
 	}
 
 	judged := round{
-		verdicts: make(map[string]bool, len(reply.Results)),
-		reasons:  make(map[string]string, len(reply.Results)),
+		verdicts: make(map[string]bool, len(units)),
+		reasons:  make(map[string]string, len(units)),
 	}
-	for _, entry := range reply.Results {
-		if _, isRepeat := judged.verdicts[entry.Name]; isRepeat {
-			return round{}, fmt.Errorf("verdict for test unit %q given twice in %s", entry.Name, opts.File)
-		}
-		judged.verdicts[entry.Name] = entry.Satisfies
-		judged.reasons[entry.Name] = entry.Reason
-	}
-	if err := checkNamesMatch(units, judged.verdicts, opts.File); err != nil {
-		return round{}, err
+	for _, unit := range units {
+		answer := answers[unit.Key]
+		judged.verdicts[unit.Name] = answer.Satisfies
+		judged.reasons[unit.Name] = answer.Reason
 	}
 	return judged, nil
 }
@@ -332,22 +331,23 @@ func findDuplicate(names []string) (string, bool) {
 	return "", false
 }
 
-func checkNamesMatch(names []string, verdicts map[string]bool, file string) error {
-	listed := make(map[string]bool, len(names))
-	for _, name := range names {
-		listed[name] = true
-	}
-
+// checkKeysMatch should never fire: the generated schema names every key and
+// forbids any other, so the CLI rejects a non-conforming reply before it reaches
+// here. It stays as an assertion against a contract this package does not own, and
+// keeps exit 2, because a schema that failed to hold is a could-not-run.
+func checkKeysMatch(units []Unit, answers map[string]verdictAnswer, file string) error {
+	expected := make(map[string]bool, len(units))
 	var missing []string
-	for _, name := range names {
-		if _, hasVerdict := verdicts[name]; !hasVerdict {
-			missing = append(missing, name)
+	for _, unit := range units {
+		expected[unit.Key] = true
+		if _, answered := answers[unit.Key]; !answered {
+			missing = append(missing, unit.Key)
 		}
 	}
 	var unexpected []string
-	for name := range verdicts {
-		if !listed[name] {
-			unexpected = append(unexpected, name)
+	for key := range answers {
+		if !expected[key] {
+			unexpected = append(unexpected, key)
 		}
 	}
 	sort.Strings(unexpected)
@@ -362,9 +362,151 @@ func checkNamesMatch(names []string, verdicts map[string]bool, file string) erro
 	if len(problems) == 0 {
 		return nil
 	}
-	return fmt.Errorf("verdicts for %s do not cover exactly the test functions listed: %s", file, strings.Join(problems, "; "))
+	return fmt.Errorf("verdicts for %s do not cover exactly the units listed: %s", file, strings.Join(problems, "; "))
 }
 
 func formatFileBlock(f SourceFile) string {
 	return fmt.Sprintf("=== FILE: %s ===\n%s\n=== END FILE: %s ===\n", f.Path, f.Content, f.Path)
+}
+
+// UnitsFor derives the key each enumerated identifier is answered under. The test
+// function name is kept verbatim and only the case name is normalised, because the
+// case is the half carrying arbitrary prose.
+//
+// Two cases in one function can normalise alike — "empty input" and "empty  input"
+// both reach empty_input, and truncation to the API's 64-character ceiling creates
+// more. Left alone the second would overwrite the first while the
+// schema is built, so a unit would vanish from the run with every count still
+// looking healthy. Suffixing mirrors what Go does for duplicate subtest names.
+func UnitsFor(names []string) []Unit {
+	units := make([]Unit, 0, len(names))
+	taken := make(map[string]int, len(names))
+	for _, name := range names {
+		key := keyFor(name)
+		if seen := taken[key]; seen > 0 {
+			key = fmt.Sprintf("%s-%02d", truncateKey(key, maxKeyLength-3), seen)
+		}
+		taken[keyFor(name)]++
+		units = append(units, Unit{Name: name, Key: key})
+	}
+	return units
+}
+
+// VerdictSchemaFor names every key the reply may carry. An object cannot repeat a
+// key, cannot omit a required one and cannot carry an extra one, so duplicated,
+// dropped and invented units stop being errors this package has to detect and
+// become schema violations the CLI retries on its own.
+func VerdictSchemaFor(units []Unit) json.RawMessage {
+	schema := objectSchema{
+		Type:                 "object",
+		Properties:           make(map[string]objectSchema, len(units)),
+		Required:             make([]string, 0, len(units)),
+		AdditionalProperties: false,
+	}
+	for _, unit := range units {
+		schema.Properties[unit.Key] = answerSchema()
+		schema.Required = append(schema.Required, unit.Key)
+	}
+	encoded, err := json.Marshal(schema)
+	if err != nil {
+		panic(fmt.Sprintf("the verdict schema failed to marshal, which its types make impossible: %v", err))
+	}
+	return encoded
+}
+
+type objectSchema struct {
+	Type                 string                  `json:"type"`
+	Properties           map[string]objectSchema `json:"properties,omitempty"`
+	Required             []string                `json:"required,omitempty"`
+	AdditionalProperties bool                    `json:"additionalProperties"`
+}
+
+func answerSchema() objectSchema {
+	return objectSchema{
+		Type: "object",
+		Properties: map[string]objectSchema{
+			"satisfies": {Type: "boolean"},
+			"reason":    {Type: "string"},
+		},
+		Required:             []string{"satisfies", "reason"},
+		AdditionalProperties: false,
+	}
+}
+
+func keyFor(name string) string {
+	function, caseName, hasCase := splitUnit(name)
+	key := sanitiseKey(function)
+	if hasCase {
+		normalised := snakeCase(caseName)
+		if normalised == "" {
+			normalised = "case"
+		}
+		key += "." + normalised
+	}
+	if key == "" {
+		key = "unit"
+	}
+	return truncateKey(key, maxKeyLength)
+}
+
+// maxKeyLength and the character set below are the API's, not ours: a schema
+// property key is rejected outright unless it matches ^[a-zA-Z0-9_.-]{1,64}$.
+// Colons, slashes and spaces are all out, which is why a unit's key cannot simply
+// be the identifier a reader sees.
+const maxKeyLength = 64
+
+func sanitiseKey(text string) string {
+	var b strings.Builder
+	for _, r := range text {
+		if isKeyRune(r) {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	return b.String()
+}
+
+func isKeyRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r == '_', r == '.', r == '-':
+		return true
+	default:
+		return false
+	}
+}
+
+func truncateKey(key string, limit int) string {
+	if len(key) <= limit {
+		return key
+	}
+	return key[:limit]
+}
+
+func splitUnit(name string) (function, caseName string, hasCase bool) {
+	open := strings.Index(name, " (")
+	if open < 0 || !strings.HasSuffix(name, ")") {
+		return name, "", false
+	}
+	return name[:open], name[open+2 : len(name)-1], true
+}
+
+func snakeCase(text string) string {
+	var b strings.Builder
+	pendingSeparator := false
+	for _, r := range strings.ToLower(text) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			if pendingSeparator && b.Len() > 0 {
+				b.WriteByte('_')
+			}
+			pendingSeparator = false
+			b.WriteRune(r)
+		default:
+			pendingSeparator = true
+		}
+	}
+	return b.String()
 }
