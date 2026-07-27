@@ -2,13 +2,16 @@
 
 A shield against tests that do not earn their keep.
 
-aritu is an LLM linter for Go tests. You give it a rule and a test file; it asks a
+aritu is an LLM linter for tests. You give it a rule and a test file; it asks a
 model whether each unit of that file satisfies the rule, several times over, and
 reports how many runs agreed. Run it in CI or from a pre-commit hook to stop tests
-that assert nothing, name nothing, or mock away the thing they claim to cover.
+that assert nothing, prove nothing, or mock away the thing they claim to cover.
 
 It does no code parsing. There is no AST, no matcher DSL, no suppression comments —
-just files, a prompt, and a vote.
+just files, a prompt, and a vote. That is also why it is not tied to a language: a
+model reads the file and reports what it sees, and nothing in a rule names an
+ecosystem. There is no language flag, and there is nothing to configure — the file
+is in the prompt, and the model can see what it is.
 
 ## Build
 
@@ -31,7 +34,10 @@ aritu apply internal/parser/parser_test.go
 aritu apply 'internal/**/*_test.go'
 
 # one rule, several patterns
-aritu apply --rule named-for-behavior 'internal/**/*_test.go' 'cmd/**/*_test.go'
+aritu apply --rule proves-what-it-claims 'internal/**/*_test.go' 'cmd/**/*_test.go'
+
+# the same rules over another ecosystem, with no flag to say so
+aritu apply 'src/**/*.test.ts' 'tests/test_*.py'
 
 # check the rules themselves against their own fixtures
 aritu selftest --votes 4
@@ -49,13 +55,13 @@ Omit `--rule` and every rule in the rules directory runs; repeat it to pick a fe
 
 ```
 internal/parser/parser_test.go
-  named-for-behavior
+  proves-what-it-claims
     ✓ TestParseConfig (extracts host before colon)
     ! TestParseConfig (rejects blank input) (1 of 2)
       one run read the name as stating an outcome and one did not
     ✗ TestParseConfig (host and port)
       names the input the case supplies rather than the outcome it protects
-  one-reason-to-fail
+  tests-one-thing
     ✓ TestParseConfig
 
   2 passed  ·  2 failed  ·  1 split  ·  1 file, 2 rules, 2 votes  ·  4.1s
@@ -81,7 +87,7 @@ get plain text, so what you capture is what you read.
 {
   "reports": [
     {
-      "rule": "named-for-behavior",
+      "rule": "proves-what-it-claims",
       "file": "internal/parser/parser_test.go",
       "votes": 2,
       "verdicts": { "TestParseConfig (host and port)": 0 },
@@ -138,7 +144,7 @@ output: pretty
 
 rules:
   dir: ./rules
-  enabled: [named-for-behavior, one-reason-to-fail]   # omit for all
+  enabled: [proves-what-it-claims, tests-one-thing]   # omit for all
 
 include:
   - 'internal/**/*_test.go'
@@ -163,20 +169,26 @@ A rule is a directory. One rule per directory, under `rules/` by default
 ```
 rules/
   base.md                        # shared prompt, prepended to every rule
-  one-reason-to-fail/
+  tests-one-thing/
     prompt.md
     fixtures/
-      pass-single-assert/
-        scenario.go
-        scenario_test.go
-      pass-multiple-asserts-one-behavior/
-      fail-two-unrelated-behaviors/
-      fail-act-assert-chain/
+      pass-go-table-of-inputs-to-one-behavior/
+        discount.go
+        discount_test.go
+      pass-ts-grouped-tests-are-separate-units/
+        cart.ts
+        cart.test.ts
+      fail-py-valid-and-rejected-in-one-test/
+        slug.py
+        test_slug.py
+      fail-java-marches-through-the-type-surface/
+        PriceTable.java
+        PriceTableTest.java
 ```
 
-`base.md` holds what every rule would otherwise repeat: that Go tests come in many
-shapes and the behaviour is judged rather than the syntax, what a unit is, and how
-to write a reason. A rule's `prompt.md` is then only its criterion.
+`base.md` holds what every rule would otherwise repeat: that tests come in many
+shapes across ecosystems and the behaviour is judged rather than the syntax, what a
+unit is, and how to write a reason. A rule's `prompt.md` is then only its criterion.
 
 `prompt.md` carries YAML frontmatter and that criterion:
 
@@ -185,74 +197,149 @@ to write a reason. A rule's `prompt.md` is then only its criterion.
 include_source: false
 granularity: test
 ---
-A test's name must say which behaviour breaks when the test fails...
+A test's verdict must hang on the behaviour it is named for...
 ```
 
+Both keys are required. Defaulting either one silently changes what the model sees
+or what it judges, and nothing would report it. They are also what decides which
+properties can share a rule: two properties that disagree about either cannot share
+a verdict call however similar they read.
+
+### The seven rules
+
+Roughly twenty-five separate properties make a test worth keeping. One rule per
+property would be twenty-five verdict calls per file per vote and twenty-five
+prompts to keep from contradicting each other. So they group, by **judgement** — the
+same question asked of the same unit with the same evidence in front of the model:
+
+| rule | granularity | `include_source` | |
+|---|---|---|---|
+| **`tests-one-thing`** | `function` | `false` | every assertion serves one claim |
+| **`tests-behavior-not-implementation`** | `function` | `true` | binds to the caller's seam, asserts what and not how |
+| **`proves-what-it-claims`** | `test` | `true` | remove the named behaviour and this unit goes red |
+| **`self-contained`** | `file` | `false` | same verdict on any machine, in any order, at any time |
+| **`readable`** | `function` | `false` | a stranger can tell what it establishes, and what broke |
+| **`no-redundancy`** | `file` | `true` | no two tests assert one behaviour from one equivalence class |
+| **`no-gaps`** | `file` | `true` | every distinct outcome the code can produce is asserted |
+
+Per file, per vote: one enumeration call shared by every rule, plus one verdict call
+per rule. Seven rules cost eight calls. The three `file`-granularity rules are the
+cheap ones — `file` needs no enumeration and its schema has one key.
+
+The cost that is not calls: a `file`-granularity failure returns one verdict and one
+sentence for a whole test file. `reasons` carries one entry per dissenting run, which
+softens it, and coverage genuinely is a property of the whole file — but it is
+thinner guidance than a per-test rejection, and that is a known trade.
+
+### Finding the file under test
+
 `include_source` decides what the model sees. With `false` only the test file is
-sent. With `true` the file under test goes too, resolved by Go convention
-(`parser_test.go` → `parser.go`); if it cannot be found, the file is skipped and
-reported rather than silently judged on partial context.
+sent. With `true` the implementation goes too — four of the seven rules need it,
+because whether an identifier is a subject's surface or its internals, whether two
+inputs land in one equivalence class, and what outcomes are missing are all facts
+about the code rather than about the test.
 
-Ships with three rules:
+Resolution is a **search, not a derivation**: a mirrored source tree cannot be
+reached by swapping a suffix, so aritu offers ordered candidates and takes the first
+that exists.
 
-- **`named-for-behavior`** — named for the behavior it protects, specifically
-- **`one-reason-to-fail`** — one behavior, however many assertions
-- **`no-mocking-under-test`** — doesn't mock the thing under test
+| test file | candidates, in order |
+|---|---|
+| `parser_test.go` | `parser.go` |
+| `parser.test.ts`, `parser.spec.ts`, `__tests__/parser.ts` | `parser.ts` beside it, then `test`/`tests`/`spec` swapped for `src` |
+| `test_parser.py`, `parser_test.py` | `parser.py` beside it, then the same name under the package root |
+| `ParserTest.java`, `ParserTests.java`, `TestParser.java` | `Parser.java` beside it, then `src/test/java` swapped for `src/main/java` |
+
+When nothing exists the file is skipped and **reported**, naming every path aritu
+looked at, rather than silently judged on partial context. If a real layout is
+missing from the table it is a row to add, not a knob to expose.
 
 ### Granularity
 
-`granularity` declares what a rule judges. The levels form a scale, each a
-refinement of the one above:
+`granularity` declares what a rule judges. The levels are defined by the role a
+construct plays, never by the syntax that declares it — that is what lets one rule
+set judge every ecosystem.
 
-| level | keys returned | key is |
+- **`function`** — one per **test**: the smallest thing the framework runs and
+  reports under its own name.
+- **`test`** — one per **leaf** of that: one row of a table, one parametrised
+  argument set, one subdivision declared inside the test, or the test itself when it
+  has none.
+- **`file`** — one, keyed by the path. Relations *between* tests live only here.
+
+**Enclosing scopes are namespace prefixes, not levels.** A grouping block, a fixture
+class or an outer suite qualifies a name and is joined into it with ` > `. It does
+not change what is being judged.
+
+| source | `function` | `test` |
 |---|---|---|
-| `file` | one | `internal/parser/parser_test.go` |
-| `function` | one per `func Test*` | `TestParseConfig` |
-| `test` | one per independently nameable leaf | `TestParseConfig (rejects blank input)` |
+| `func TestParseConfig` + table rows | `TestParseConfig` | `TestParseConfig (rejects blank input)` |
+| `func TestParseConfig` + `t.Run("rejects")` | `TestParseConfig` | `TestParseConfig (rejects)` |
+| `describe("formatDate")` + `it("pads days")` | `formatDate > pads days` | `formatDate > pads days` |
+| `it.each` rows under that `it` | `formatDate > pads days` | `formatDate > pads days (2026-01-05)` |
+| module-level `def test_x` | `test_x` | `test_x` |
+| `class TestParser` + `parametrize` | `TestParser > test_x` | `TestParser > test_x (blank input)` |
+| `class ParserTest` + `@Test rejectsBlank` | `ParserTest > rejectsBlank` | `ParserTest > rejectsBlank` |
 
-At `test` granularity a table row, a `map[string]struct{...}` key and a `t.Run`
-subtest are each a leaf; a plain function that declares none of them is one leaf by
-itself.
+The asymmetry in rows two and three is load-bearing. Two subtests in one function
+are **one** `function`-level unit, so `tests-one-thing` sees both and rejects them —
+correct, because that is one language's shape for two behaviours sharing a name. Two
+`it`s in one `describe` are **two** `function`-level units, so each is judged alone
+and both pass — also correct, because a `describe` is a grouping construct and
+grouping is what it is for.
 
-**The unit judged is the whole identifier**, which is also what Go prints when a
-case fails. Neither half has to carry the meaning alone:
+**The unit judged is the whole identifier**, which is also what a test runner prints
+when a case fails. No part has to carry the meaning alone:
 
 ```
-TestTrimsSurroundingWhitespaceFromEachTag (leading spaces)   ← function states it
-TestParseAddress (extracts host before colon)                ← case states it
+TestTrimsSurroundingWhitespaceFromEachTag (leading spaces)   ← the test states it
+TestParseAddress (extracts host before colon)                ← the case states it
 TestParseConfig (host and port)                              ← neither does: fails
 ```
 
 That is why a table of many inputs to one behaviour is fine with input-named rows,
-and why deleting your case names does not help — it pushes judgement up onto a
-function name that now has to carry every claim at once.
-
-Both keys are required. Defaulting either one silently changes what the model sees
-or what it judges, and nothing would report it.
+and why deleting your case names does not help — it pushes judgement up onto a name
+that now has to carry every claim at once.
 
 ### Writing a rule
 
 State **both poles**: the property a test must have, and the shapes that
 disqualify it. A prompt given only one pole drifts toward answering everything the
 same way, and a rule that never fires is indistinguishable from a rule that always
-passes.
+passes. A grouped rule needs the second pole more than a narrow one did, because it
+has several ways to be wrong and several near-misses to spare.
 
-Then prove it with fixtures. Each fixture is its own directory — Go files in one
-directory share a package, so two fixtures both declaring `TestFoo` would not
-compile otherwise. The `pass-`/`fail-` prefix carries the expectation, and
-`selftest` checks every fixture against it:
+Then prove it with fixtures. Each fixture is its own directory holding exactly one
+test file and the implementation it covers — one directory per fixture because files
+in one directory often share a namespace, so two fixtures both declaring `TestFoo`
+would collide. The `pass-`/`fail-` prefix carries the expectation and a language
+segment follows it, so the four coverage floors are visible in the listing:
+
+1. Every rule carries at least one pass and one fail fixture **in each of Go,
+   TypeScript, Python and Java**. This is the only thing that proves a prompt is not
+   quietly shaped around one ecosystem.
+2. Every disqualifying shape a prompt names has a fail fixture, in whichever
+   language expresses that shape most naturally.
+3. Every near-miss a prompt calls out as satisfying has a pass fixture. These are
+   what stop a rule over-firing, and they are the ones that break during tuning.
+
+`selftest` checks every fixture against its prefix:
 
 ```
-rule: named-for-behavior  model: sonnet  votes: 4
+rule: proves-what-it-claims  model: sonnet  votes: 4
 
-FIXTURE                                   EXPECT  RESULT  VERDICTS
-fail-namespace-function-input-rows        fail    hold    TestParseClock (hour of 24)=0 TestParseClock (midnight)=0 ...
-fail-numbered-rows                        fail    hold    TestRunningTotals (case 1)=0 TestRunningTotals (case 2)=0 ...
-pass-namespace-function-behavioural-rows  pass    hold    TestParseSemver (rejects a version missing the patch component)=4 ...
-pass-subtests-named-for-behaviour         pass    hold    TestDeduplicate (drops values that already appeared)=4 ...
+FIXTURE                                          EXPECT  RESULT  TIME     VERDICTS
+fail-java-asserts-only-that-nothing-threw        fail    hold    1m23.2s  parsesTheHostFromAnAddress=0 parsesThePortFromAnAddress=0
+fail-py-numbered-cases-under-a-bare-test         fail    hold    30.7s    test_slugify (case 1)=0 test_slugify (case 2)=0 ...
+pass-py-numbered-cases-under-a-stated-behaviour  pass    hold    45.1s    test_rejects_ports_above_the_maximum (case 1)=4 ...
+pass-ts-terse-names-state-outcomes               pass    hold    14.1s    clampPercent > caps at 100=4 clampPercent > floors at 0=4 ...
 
-11/11 fixtures hold
+14/14 fixtures hold in 2m27.7s
 ```
+
+The two `numbered-cases` fixtures are the pair that keeps this rule honest: numbered case
+labels are a violation under a test that states no behaviour and are not one under a test
+that does, and only having both in the set proves the rule can tell them apart.
 
 `selftest` is `apply` in a loop — same prompt, same voting, same code path. It adds
 only the comparison against the directory prefix and the table. It compares counts,
@@ -268,8 +355,13 @@ and a replaced system prompt.
 
 The first enumerates the units in a file. It depends on the file and nothing else —
 the rule's text never reaches it — so **a file is enumerated once however many
-rules judge it**, and the coarser levels roll up from that one list. Running three
-rules over nine files makes nine enumeration calls, not twenty-seven.
+rules judge it**, and the coarser levels roll up from that one list. Running seven
+rules over nine files makes nine enumeration calls, not sixty-three.
+
+It asks for roles rather than for syntax: the smallest thing the framework runs and
+reports under its own name, the scopes enclosing it, and the leaves it subdivides
+into. No language is named to the model, which is what lets one enumeration prompt
+serve every ecosystem.
 
 The second judges those units against one rule, and is handed the enumerated list
 explicitly rather than left to re-derive it. Its schema is generated per call with

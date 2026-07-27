@@ -57,10 +57,11 @@ type ApplyCmd struct {
 // SelftestCmd runs every named rule against its own fixtures.
 type SelftestCmd struct{}
 
-const description = `An LLM linter for Go tests.
+const description = `An LLM linter for tests.
 
 Point it at files and every rule in the rules directory judges them, reported
-once, grouped by file.`
+once, grouped by file. No flag names a language: a model reads the file, and the
+rules describe properties rather than syntax.`
 
 const exitCodes = `Exit codes:
 
@@ -359,11 +360,21 @@ func ruleNamesFor(cli *CLI) ([]string, error) {
 	return rule.List(cli.Rules)
 }
 
+// attempts is how many turns one call gets before it is reported as a
+// could-not-run. A model that answers outside the schema it was handed is the one
+// failure that a fresh turn usually fixes, and at seven rules over a corpus even a
+// small per-call rate makes every sweep report an error it did not earn.
+const attempts = 3
+
 // askFor bounds concurrency at the seam every model call passes through, so
 // file-level, rule-level and vote-level parallelism cannot multiply into a
 // process storm. One ask serves a whole run; a second would be a second ceiling.
+//
+// The throttle wraps the retry rather than the other way round, so a call keeps
+// its one slot across its attempts. Acquiring a slot per attempt would let a run
+// where many calls retry at once outrun the ceiling it was given.
 func askFor(cli *CLI) claudecli.Ask {
-	return claudecli.Throttle(claudecli.Exec(cli.Claude), cli.Jobs)
+	return claudecli.Throttle(claudecli.Retry(claudecli.Exec(cli.Claude), attempts), cli.Jobs)
 }
 
 // sweep is everything a reporter needs. Both reporters take it so the choice of

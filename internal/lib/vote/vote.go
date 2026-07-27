@@ -63,7 +63,7 @@ func Tally[K comparable](rounds []map[K]bool) map[K]int {
 }
 
 // IsUnanimous reports whether every count equals total. An empty tally is
-// unanimous: a file with no test functions has nothing to fail.
+// unanimous: a file with no tests has nothing to fail.
 func IsUnanimous[K comparable](counts map[K]int, total int) bool {
 	for _, count := range counts {
 		if count != total {
