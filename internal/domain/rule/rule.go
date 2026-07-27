@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/matthijn/aritu/internal/lib/testpath"
 )
 
 // Rule is one linting rule loaded from a directory under the rules dir.
@@ -50,10 +52,11 @@ const (
 const (
 	// GranularityFile judges the file as a single unit, keyed by its path.
 	GranularityFile Granularity = iota + 1
-	// GranularityFunction judges each top-level test function.
+	// GranularityFunction judges each test: the smallest thing the framework runs
+	// and reports under its own name, qualified by the scopes enclosing it.
 	GranularityFunction
-	// GranularityTest judges each independently nameable leaf: a table row, a
-	// t.Run subtest, or the function itself when it declares neither.
+	// GranularityTest judges each independently nameable leaf: one case of a test,
+	// or the test itself when it declares no cases.
 	GranularityTest
 )
 
@@ -190,17 +193,28 @@ func ParseExpectation(dirName string) (Expectation, error) {
 	return 0, fmt.Errorf("fixture %q: name must start with pass- or fail-", dirName)
 }
 
-// SourcePathFor maps a Go test file to the implementation it covers, following
-// the file_test.go -> file.go convention. It reports false when the path is not
-// a test file.
-func SourcePathFor(testPath string) (string, bool) {
-	if !strings.HasSuffix(testPath, testSuffix) {
-		return "", false
+// FindSource locates the implementation a test file covers: the first candidate
+// its naming convention offers that is actually a file on disk.
+//
+// Resolution has to touch the filesystem because a mirrored source tree and a file
+// beside the test are both plausible layouts, and no reading of the path alone
+// decides between them.
+//
+// The failure names every path it looked at. Four of seven rules need the source,
+// and a rule that skips a file is only useful if the reader can see where aritu
+// searched and add the file — or the layout — that was missing.
+func FindSource(testPath string) (string, error) {
+	candidates := testpath.SourceCandidates(testPath)
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("%s matches no test file naming convention aritu knows", testPath)
 	}
-	if strings.TrimSuffix(filepath.Base(testPath), testSuffix) == "" {
-		return "", false
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			return candidate, nil
+		}
 	}
-	return strings.TrimSuffix(testPath, testSuffix) + ".go", true
+	return "", fmt.Errorf("no implementation found for %s, looked for %s", testPath, strings.Join(candidates, ", "))
 }
 
 // String renders an expectation as "pass" or "fail".
@@ -233,7 +247,6 @@ const (
 	promptFileName  = "prompt.md"
 	baseFileName    = "base.md"
 	fixturesDirName = "fixtures"
-	testSuffix      = "_test.go"
 )
 
 var expectationPrefixes = map[string]Expectation{
@@ -260,6 +273,9 @@ func loadFixture(fixturesDir, name string) (Fixture, error) {
 	return Fixture{Name: name, TestFile: testFile, Expect: expect}, nil
 }
 
+// findTestFile insists on exactly one test file per fixture directory, whatever
+// the language. One is what makes a fixture unambiguous: two would leave which
+// file the expectation applies to undecided.
 func findTestFile(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -267,13 +283,13 @@ func findTestFile(dir string) (string, error) {
 	}
 	found := make([]string, 0, 1)
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), testSuffix) {
+		if entry.IsDir() || !testpath.IsTestFile(entry.Name()) {
 			continue
 		}
 		found = append(found, filepath.Join(dir, entry.Name()))
 	}
 	if len(found) != 1 {
-		return "", fmt.Errorf("fixture %s: want exactly one *_test.go file, found %d", dir, len(found))
+		return "", fmt.Errorf("fixture %s: want exactly one test file, found %d", dir, len(found))
 	}
 	return found[0], nil
 }

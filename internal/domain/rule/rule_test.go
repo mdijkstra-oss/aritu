@@ -3,6 +3,7 @@ package rule
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -135,31 +136,112 @@ func TestParseExpectation(t *testing.T) {
 	}
 }
 
-func TestSourcePathFor(t *testing.T) {
+func TestFindSource(t *testing.T) {
 	tests := []struct {
-		name     string
-		testPath string
-		want     string
-		wantOK   bool
+		name            string
+		files           map[string]string
+		testPath        string
+		want            string
+		wantOK          bool
+		wantErrContains []string
 	}{
-		{name: "flat", testPath: "parser_test.go", want: "parser.go", wantOK: true},
-		{name: "nested directories", testPath: "internal/domain/parser_test.go", want: "internal/domain/parser.go", wantOK: true},
-		{name: "directory named like a test", testPath: "a_test.go/parser_test.go", want: "a_test.go/parser.go", wantOK: true},
-		{name: "non test file", testPath: "parser.go", wantOK: false},
-		{name: "testdata suffix without underscore", testPath: "parsertest.go", wantOK: false},
-		{name: "bare test file", testPath: "_test.go", wantOK: false},
-		{name: "bare test file in a directory", testPath: "internal/_test.go", wantOK: false},
-		{name: "empty", testPath: "", wantOK: false},
+		{
+			name:     "the implementation beside the test",
+			files:    map[string]string{"internal/parser_test.go": "", "internal/parser.go": ""},
+			testPath: "internal/parser_test.go",
+			want:     "internal/parser.go",
+			wantOK:   true,
+		},
+		{
+			name: "a mirrored source tree",
+			files: map[string]string{
+				"src/test/java/com/x/ParserTest.java": "",
+				"src/main/java/com/x/Parser.java":     "",
+			},
+			testPath: "src/test/java/com/x/ParserTest.java",
+			want:     "src/main/java/com/x/Parser.java",
+			wantOK:   true,
+		},
+		{
+			name: "a sibling outranks the mirrored tree",
+			files: map[string]string{
+				"src/test/java/com/x/ParserTest.java": "",
+				"src/test/java/com/x/Parser.java":     "",
+				"src/main/java/com/x/Parser.java":     "",
+			},
+			testPath: "src/test/java/com/x/ParserTest.java",
+			want:     "src/test/java/com/x/Parser.java",
+			wantOK:   true,
+		},
+		{
+			name:     "a test tree swapped for a source tree",
+			files:    map[string]string{"test/parser.test.ts": "", "src/parser.ts": ""},
+			testPath: "test/parser.test.ts",
+			want:     "src/parser.ts",
+			wantOK:   true,
+		},
+		{
+			name:     "a module under the package root",
+			files:    map[string]string{"tests/test_parser.py": "", "parser.py": ""},
+			testPath: "tests/test_parser.py",
+			want:     "parser.py",
+			wantOK:   true,
+		},
+		{
+			name:            "nothing the convention offers exists",
+			files:           map[string]string{"internal/parser_test.go": ""},
+			testPath:        "internal/parser_test.go",
+			wantErrContains: []string{"looked for", filepath.FromSlash("internal/parser.go")},
+		},
+		{
+			name:            "a directory standing where the implementation would be",
+			files:           map[string]string{"internal/parser_test.go": "", "internal/parser.go/keep": ""},
+			testPath:        "internal/parser_test.go",
+			wantErrContains: []string{"looked for"},
+		},
+		{
+			name:     "every candidate a search offers is named",
+			files:    map[string]string{"tests/test_parser.py": ""},
+			testPath: "tests/test_parser.py",
+			wantErrContains: []string{
+				filepath.FromSlash("tests/parser.py"),
+				filepath.FromSlash("src/parser.py"),
+			},
+		},
+		{
+			name:            "not a test file",
+			files:           map[string]string{"internal/parser.go": ""},
+			testPath:        "internal/parser.go",
+			wantErrContains: []string{"matches no test file naming convention"},
+		},
+		{
+			name:            "an extension no convention covers",
+			files:           map[string]string{"parser_test.rb": "", "parser.rb": ""},
+			testPath:        "parser_test.rb",
+			wantErrContains: []string{"matches no test file naming convention"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := SourcePathFor(tt.testPath)
-			if ok != tt.wantOK {
-				t.Fatalf("SourcePathFor() ok = %v, want %v", ok, tt.wantOK)
+			root := writeTree(t, tt.files)
+
+			got, err := FindSource(filepath.Join(root, filepath.FromSlash(tt.testPath)))
+
+			if (err == nil) != tt.wantOK {
+				t.Fatalf("FindSource() error = %v, want a source path: %v", err, tt.wantOK)
 			}
-			if ok && got != filepath.FromSlash(tt.want) {
-				t.Errorf("SourcePathFor() = %q, want %q", got, tt.want)
+			if err != nil {
+				for _, want := range tt.wantErrContains {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("FindSource() error = %q, want it to name %q", err, want)
+					}
+				}
+				return
+			}
+			want := filepath.Join(root, filepath.FromSlash(tt.want))
+			if got != want {
+				t.Errorf("FindSource() = %q, want %q", got, want)
 			}
 		})
 	}
