@@ -274,22 +274,29 @@ func newLeafCache() *leafCache {
 }
 
 func (c *leafCache) leavesOf(ctx context.Context, ask service.Ask, target lint.Options) ([]string, error) {
-	entry := c.entryFor(target.File)
+	entry := c.entryFor(enumerationKey(target))
 	entry.once.Do(func() {
 		entry.leaves, entry.err = lint.Enumerate(ctx, ask, target)
 	})
 	return entry.leaves, entry.err
 }
 
-func (c *leafCache) entryFor(file string) *leafEntry {
+func (c *leafCache) entryFor(key string) *leafEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	entry, claimed := c.entries[file]
+	entry, claimed := c.entries[key]
 	if !claimed {
 		entry = &leafEntry{}
-		c.entries[file] = entry
+		c.entries[key] = entry
 	}
 	return entry
+}
+
+// enumerationKey is the file and the fragments the enumeration prompt was built
+// from. Two rules over one file share an answer only when they asked the same
+// question, and a rule including a different fragment is asking a different one.
+func enumerationKey(target lint.Options) string {
+	return target.File + "\x00" + strings.Join(target.Rule.Include, ",")
 }
 
 func writeResult(b *strings.Builder, result Result, colour bool) error {

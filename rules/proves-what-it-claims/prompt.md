@@ -1,6 +1,7 @@
 ---
+include: [tests]
 include_source: true
-granularity: test
+granularity: test_case
 ---
 A unit's verdict must hang on the behaviour it is named for. Two things have to be true
 at once, and the unit fails this rule if either is missing: the name must state a

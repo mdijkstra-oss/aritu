@@ -10,43 +10,96 @@ package prompts
 import (
 	"embed"
 	"fmt"
+	"io/fs"
+	"path"
+	"slices"
 	"strings"
 )
 
-// Verdict renders the prompt that asks for one verdict per unit. The layering runs
-// generic to specific: what judging is at all, then what the units of this kind of
-// file are, then the one rule being judged.
-func Verdict(rulePrompt, units, sources string) string {
+// Verdict renders the prompt that asks for one verdict per unit: the generic
+// framing, then whatever fragments the rule asked to include, then the rule.
+func Verdict(includes []string, rulePrompt, units, sources string) string {
 	return render("verdict.md", map[string]string{
-		"unit_model": read(unitModelFile),
-		"rule":       strings.TrimSpace(rulePrompt),
-		"units":      strings.TrimSpace(units),
-		"sources":    strings.TrimSpace(sources),
+		"fragments": join(includes, verdictFragment),
+		"rule":      strings.TrimSpace(rulePrompt),
+		"units":     strings.TrimSpace(units),
+		"sources":   strings.TrimSpace(sources),
 	})
 }
 
-// Enumerate renders the prompt that lists a file's units. It carries no rule: the
-// units of a file are the same whichever rule is about to judge them, which is what
-// lets one enumeration serve every rule in a run.
-func Enumerate(source string) string {
+// Enumerate renders the prompt that lists a file's units. It carries no rule, only
+// the same fragments: the units of a file are the same whichever rule is about to
+// judge them, which is what lets one enumeration serve every rule that includes the
+// same fragments.
+func Enumerate(includes []string, source string) string {
 	return render("enumerate.md", map[string]string{
-		"unit_model":       read(unitModelFile),
-		"unit_enumeration": read(unitEnumerationFile),
-		"source":           strings.TrimSpace(source),
+		"fragments": join(includes, enumerateFragment),
+		"source":    strings.TrimSpace(source),
 	})
 }
 
-//go:embed *.md units/*.md
+// Known names every fragment a rule may include, sorted. Rules are loaded from a
+// repository and prompts are not, so an include naming a fragment this binary does
+// not carry has to be caught when the rule is read.
+func Known() []string {
+	entries, err := fs.ReadDir(files, fragmentDir)
+	if err != nil {
+		panic(fmt.Sprintf("embedded fragment directory: %v", err))
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name, isVerdict := strings.CutSuffix(entry.Name(), ".md")
+		if !isVerdict || strings.HasSuffix(name, enumerateSuffix) {
+			continue
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// IsKnown reports whether a rule may include the named fragment.
+func IsKnown(name string) bool {
+	return slices.Contains(Known(), name)
+}
+
+//go:embed *.md fragments/*.md
 var files embed.FS
 
-// unitModelFile and unitEnumerationFile name the one unit model aritu ships. The
-// seam is here rather than in configuration: a second model would be a second pair
-// of files and a way to choose between them, and until one exists a setting with a
-// single legal value is surface for nothing.
 const (
-	unitModelFile       = "units/tests.md"
-	unitEnumerationFile = "units/tests-enumerate.md"
+	fragmentDir     = "fragments"
+	enumerateSuffix = ".enumerate"
 )
+
+// verdictFragment is what a fragment contributes to a verdict call, and
+// enumerateFragment what it contributes to an enumeration.
+//
+// The enumeration gets both halves: what a test, a scope and a case are is the same
+// answer whether the model is listing them or judging them, and only the listing
+// half — what to write down and what to leave out — is enumeration's alone. A
+// fragment with nothing to say about listing has no second file.
+func verdictFragment(name string) string {
+	return read(path.Join(fragmentDir, name+".md"))
+}
+
+func enumerateFragment(name string) string {
+	shared := verdictFragment(name)
+	listing := readOptional(path.Join(fragmentDir, name+enumerateSuffix+".md"))
+	if listing == "" {
+		return shared
+	}
+	return shared + "\n\n" + listing
+}
+
+func join(includes []string, contribution func(string) string) string {
+	parts := make([]string, 0, len(includes))
+	for _, name := range includes {
+		if part := strings.TrimSpace(contribution(name)); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
 
 // render substitutes every {{name}} in a template. What is checked for a
 // placeholder nobody supplied is the template, never the result: the values carry
@@ -62,7 +115,16 @@ func render(name string, values map[string]string) string {
 	for key, value := range values {
 		rendered = strings.ReplaceAll(rendered, "{{"+key+"}}", value)
 	}
-	return rendered
+	return collapseBlankRuns(rendered)
+}
+
+// collapseBlankRuns closes the gap a fragment nobody included leaves behind, so an
+// omitted include costs no stray blank lines in the prompt.
+func collapseBlankRuns(text string) string {
+	for strings.Contains(text, "\n\n\n") {
+		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
+	}
+	return strings.TrimSpace(text) + "\n"
 }
 
 // findUnfilled reports the first placeholder the template carries that no value
@@ -97,6 +159,14 @@ func read(name string) string {
 	raw, err := files.ReadFile(name)
 	if err != nil {
 		panic(fmt.Sprintf("embedded prompt %s: %v", name, err))
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func readOptional(name string) string {
+	raw, err := files.ReadFile(name)
+	if err != nil {
+		return ""
 	}
 	return strings.TrimSpace(string(raw))
 }

@@ -212,28 +212,30 @@ reason — lives in `prompts/`, embedded in the binary:
 prompts/
   verdict.md                 # what a verdict is, and how to write its reason
   enumerate.md               # how to list a file's units
-  units/
+  fragments/
     tests.md                 # what a test, a scope and a case are
-    tests-enumerate.md       # what to list and what to leave out
+    tests.enumerate.md       # what to list and what to leave out
 ```
 
-Each prompt aritu sends is those layers joined, generic first:
-`verdict.md` + `units/tests.md` + the rule's `prompt.md` + the units and files.
-The unit model sits in its own layer so that judging something other than tests is
-a matter of writing another one.
+A rule names the fragments it wants and they are spliced in, generic first:
+`verdict.md` + each fragment + the rule's `prompt.md` + the units and files. A rule
+that includes nothing is told nothing about tests, which is what makes a rule about
+anything else possible.
 
 `prompt.md` carries YAML frontmatter and that criterion:
 
 ```markdown
 ---
+include: [tests]
 include_source: false
-granularity: test
+granularity: test_case
 ---
 A test's verdict must hang on the behaviour it is named for...
 ```
 
-Both keys are required. Defaulting either one silently changes what the model sees
-or what it judges, and nothing would report it. They are also what decides which
+`include_source` and `granularity` are required. Defaulting either one silently
+changes what the model sees or what it judges, and nothing would report it. They are
+also what decides which
 properties can share a rule: two properties that disagree about either cannot share
 a verdict call however similar they read.
 
@@ -248,7 +250,7 @@ same question asked of the same unit with the same evidence in front of the mode
 |---|---|---|---|
 | **`tests-one-thing`** | `function` | `false` | every assertion serves one claim |
 | **`tests-behavior-not-implementation`** | `function` | `true` | binds to the caller's seam, asserts what and not how |
-| **`proves-what-it-claims`** | `test` | `true` | remove the named behaviour and this unit goes red |
+| **`proves-what-it-claims`** | `test_case` | `true` | remove the named behaviour and this unit goes red |
 | **`self-contained`** | `file` | `false` | same verdict on any machine, in any order, at any time |
 | **`readable`** | `function` | `false` | a stranger can tell what it establishes, and what broke |
 | **`no-redundancy`** | `file` | `true` | no two tests assert one behaviour from one equivalence class |
@@ -292,9 +294,10 @@ missing from the table it is a row to add, not a knob to expose.
 construct plays, never by the syntax that declares it — that is what lets one rule
 set judge every ecosystem.
 
-- **`function`** — one per **test**: the smallest thing the framework runs and
-  reports under its own name.
-- **`test`** — one per **leaf** of that: one row of a table, one parametrised
+- **`function`** — one per named thing the file runs or declares. Which of them
+  count is the included fragments' answer, not the level's: with `include: [tests]`
+  it is each test, with nothing included it is each declaration.
+- **`test_case`** — one per **leaf** of that: one row of a table, one parametrised
   argument set, one subdivision declared inside the test, or the test itself when it
   has none.
 - **`file`** — one, keyed by the path. Relations *between* tests live only here.
@@ -303,7 +306,7 @@ set judge every ecosystem.
 class or an outer suite qualifies a name and is joined into it with ` > `. It does
 not change what is being judged.
 
-| source | `function` | `test` |
+| source | `function` | `test_case` |
 |---|---|---|
 | `func TestParseConfig` + table rows | `TestParseConfig` | `TestParseConfig (rejects blank input)` |
 | `func TestParseConfig` + `t.Run("rejects")` | `TestParseConfig` | `TestParseConfig (rejects)` |

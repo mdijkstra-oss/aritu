@@ -10,6 +10,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/matthijn/aritu/prompts"
+
 	"github.com/matthijn/aritu/internal/lib/testpath"
 )
 
@@ -18,6 +20,7 @@ type Rule struct {
 	Name          string
 	Dir           string
 	Prompt        string
+	Include       []string
 	IncludeSource bool
 	Granularity   Granularity
 }
@@ -41,6 +44,7 @@ type Fixture struct {
 type Prompt struct {
 	IncludeSource bool
 	Granularity   Granularity
+	Include       []string
 	Body          string
 }
 
@@ -52,12 +56,13 @@ const (
 const (
 	// GranularityFile judges the file as a single unit, keyed by its path.
 	GranularityFile Granularity = iota + 1
-	// GranularityFunction judges each test: the smallest thing the framework runs
-	// and reports under its own name, qualified by the scopes enclosing it.
+	// GranularityFunction judges each thing the file runs or declares under its own
+	// name. Which of them count is the included fragments' answer, not this value's:
+	// with the tests fragment it is each test, with none it is each declaration.
 	GranularityFunction
-	// GranularityTest judges each independently nameable leaf: one case of a test,
-	// or the test itself when it declares no cases.
-	GranularityTest
+	// GranularityTestCase judges each independently nameable leaf: one case of a
+	// test, or the test itself when it declares no cases.
+	GranularityTestCase
 )
 
 // Load reads <rulesDir>/<name>/prompt.md.
@@ -75,6 +80,7 @@ func Load(rulesDir, name string) (Rule, error) {
 		Name:          name,
 		Dir:           dir,
 		Prompt:        prompt.Body,
+		Include:       prompt.Include,
 		IncludeSource: prompt.IncludeSource,
 		Granularity:   prompt.Granularity,
 	}, nil
@@ -151,9 +157,13 @@ func ParsePrompt(raw string) (Prompt, error) {
 	if err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
 	}
+	if err := checkIncludesAreKnown(front.Include); err != nil {
+		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
+	}
 	return Prompt{
 		IncludeSource: *front.IncludeSource,
 		Granularity:   granularity,
+		Include:       front.Include,
 		Body:          joinAfterLeadingBlanks(lines[closing+1:]),
 	}, nil
 }
@@ -162,9 +172,22 @@ func ParsePrompt(raw string) (Prompt, error) {
 func ParseGranularity(name string) (Granularity, error) {
 	granularity, isKnown := granularityNames[name]
 	if !isKnown {
-		return 0, fmt.Errorf("granularity %q: must be file, function or test", name)
+		return 0, fmt.Errorf("granularity %q: must be file, function or test_case", name)
 	}
 	return granularity, nil
+}
+
+// checkIncludesAreKnown rejects a fragment this binary does not carry. Rules are
+// read from a repository and prompts are compiled in, so an include naming a
+// fragment that was renamed or never existed has to fail when the rule is loaded
+// rather than reach a model as a gap in the prompt.
+func checkIncludesAreKnown(includes []string) error {
+	for _, name := range includes {
+		if !prompts.IsKnown(name) {
+			return fmt.Errorf("include %q: must be one of %s", name, strings.Join(prompts.Known(), ", "))
+		}
+	}
+	return nil
 }
 
 // ParseExpectation reads the pass-/fail- prefix a fixture directory carries.
@@ -220,8 +243,8 @@ func (g Granularity) String() string {
 		return "file"
 	case GranularityFunction:
 		return "function"
-	case GranularityTest:
-		return "test"
+	case GranularityTestCase:
+		return "test_case"
 	default:
 		panic(fmt.Sprintf("unknown granularity: %d", int(g)))
 	}
@@ -238,9 +261,9 @@ var expectationPrefixes = map[string]Expectation{
 }
 
 var granularityNames = map[string]Granularity{
-	"file":     GranularityFile,
-	"function": GranularityFunction,
-	"test":     GranularityTest,
+	"file":      GranularityFile,
+	"function":  GranularityFunction,
+	"test_case": GranularityTestCase,
 }
 
 func loadFixture(fixturesDir, name string) (Fixture, error) {
@@ -278,8 +301,9 @@ func findTestFile(dir string) (string, error) {
 }
 
 type frontmatter struct {
-	IncludeSource *bool   `yaml:"include_source"`
-	Granularity   *string `yaml:"granularity"`
+	IncludeSource *bool    `yaml:"include_source"`
+	Granularity   *string  `yaml:"granularity"`
+	Include       []string `yaml:"include"`
 }
 
 func isFrontmatterDelimiter(line string) bool {

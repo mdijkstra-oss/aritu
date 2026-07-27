@@ -3,6 +3,7 @@ package rule
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,8 +22,23 @@ func TestParsePrompt(t *testing.T) {
 		},
 		{
 			name: "include_source false",
-			raw:  "---\ninclude_source: false\ngranularity: test\n---\nJudge the test.",
-			want: Prompt{IncludeSource: false, Granularity: GranularityTest, Body: "Judge the test."},
+			raw:  "---\ninclude_source: false\ngranularity: test_case\n---\nJudge the test.",
+			want: Prompt{IncludeSource: false, Granularity: GranularityTestCase, Body: "Judge the test."},
+		},
+		{
+			name: "an include names a fragment the binary carries",
+			raw:  "---\ninclude: [tests]\ninclude_source: true\ngranularity: function\n---\nbody",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Include: []string{"tests"}, Body: "body"},
+		},
+		{
+			name:    "an include naming a fragment nobody wrote is refused",
+			raw:     "---\ninclude: [haiku]\ninclude_source: true\ngranularity: function\n---\nbody",
+			wantErr: true,
+		},
+		{
+			name:    "the listing half is not includable on its own",
+			raw:     "---\ninclude: [tests.enumerate]\ninclude_source: true\ngranularity: function\n---\nbody",
+			wantErr: true,
 		},
 		{
 			name: "body keeps its own delimiters and blank lines",
@@ -100,7 +116,7 @@ func TestParsePrompt(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParsePrompt() = %#v, want %#v", got, tt.want)
 			}
 		})
@@ -303,9 +319,9 @@ func TestLoad(t *testing.T) {
 		},
 		{
 			name:  "include_source false",
-			files: map[string]string{"named-for-behavior/prompt.md": "---\ninclude_source: false\ngranularity: test\n---\nName it.\n"},
+			files: map[string]string{"named-for-behavior/prompt.md": "---\ninclude_source: false\ngranularity: test_case\n---\nName it.\n"},
 			rule:  "named-for-behavior",
-			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", IncludeSource: false, Granularity: GranularityTest},
+			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", IncludeSource: false, Granularity: GranularityTestCase},
 		},
 		{
 			name:    "missing rule directory",
@@ -339,7 +355,7 @@ func TestLoad(t *testing.T) {
 			}
 			want := tt.want
 			want.Dir = filepath.Join(root, tt.rule)
-			if got != want {
+			if !reflect.DeepEqual(got, want) {
 				t.Errorf("Load() = %#v, want %#v", got, want)
 			}
 		})
@@ -496,9 +512,10 @@ func TestParseGranularity(t *testing.T) {
 	}{
 		{name: "file", in: "file", want: GranularityFile},
 		{name: "function", in: "function", want: GranularityFunction},
-		{name: "test", in: "test", want: GranularityTest},
+		{name: "test_case", in: "test_case", want: GranularityTestCase},
+		{name: "test is the name it used to answer to", in: "test", wantErr: true},
 		{name: "package is not a level yet", in: "package", wantErr: true},
-		{name: "capitalised", in: "Test", wantErr: true},
+		{name: "capitalised", in: "Test_Case", wantErr: true},
 		{name: "empty", in: "", wantErr: true},
 	}
 
@@ -523,7 +540,7 @@ func TestGranularityStringNamesTheLevel(t *testing.T) {
 	}{
 		{name: "file", granularity: GranularityFile, want: "file"},
 		{name: "function", granularity: GranularityFunction, want: "function"},
-		{name: "test", granularity: GranularityTest, want: "test"},
+		{name: "test_case", granularity: GranularityTestCase, want: "test_case"},
 	}
 
 	for _, tt := range tests {
