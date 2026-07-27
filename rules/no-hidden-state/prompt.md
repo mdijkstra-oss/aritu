@@ -1,8 +1,9 @@
 ---
 targets: [code]
-include_source: false
 granularity: file
 ---
 
-- Pass dependencies in explicitly; no global state.
-- Perform IO at the boundaries. Keep the core pure.
+Everything a function depends on is visible at its call site; nothing flows in from the side.
+
+- Pass dependencies in explicitly — no global state.
+- Perform IO at the boundaries; keep the core pure.
