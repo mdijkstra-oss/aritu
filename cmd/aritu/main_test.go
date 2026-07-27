@@ -1107,10 +1107,15 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 	}
 }
 
-// shippedRuleNames is the parked set and not what List offers, because those two
-// have come apart: what aritu ships is the grouped rules, and what a sweep here
-// picks up is this repository's own rule set, which is free to name an ecosystem
-// as often as it likes.
+// shippedRuleNames is the grouped set aritu ships and not what List offers, because
+// those two have come apart. What a sweep here picks up is this repository's own
+// rule set, which is free to name an ecosystem as often as it likes; only the rules
+// aritu hands to somebody else owe language neutrality.
+//
+// The grouped rules are the ones parked under a single _. This repository parks a
+// second population under __ — its own rules, awaiting prompts — and aritu itself
+// sees no difference between the two, since a leading _ is the whole of what parking
+// means to it.
 func shippedRuleNames(t *testing.T) []string {
 	t.Helper()
 	entries, err := os.ReadDir(shippedRulesDir)
@@ -1119,12 +1124,12 @@ func shippedRuleNames(t *testing.T) []string {
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() && rule.IsParked(entry.Name()) {
+		if entry.IsDir() && rule.IsParked(entry.Name()) && !strings.HasPrefix(entry.Name(), "__") {
 			names = append(names, entry.Name())
 		}
 	}
 	if len(names) == 0 {
-		t.Fatalf("no parked rules in %s, so this test checked nothing", shippedRulesDir)
+		t.Fatalf("no grouped rules in %s, so this test checked nothing", shippedRulesDir)
 	}
 	return names
 }

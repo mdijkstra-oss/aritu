@@ -62,16 +62,22 @@ func TestTheShippedRuleSetIsTheSevenGroupedRules(t *testing.T) {
 		want = append(want, shipped.name)
 	}
 
-	got := parkedRuleNames(t)
+	got := groupedRuleNames(t)
 
 	if !slices.Equal(got, want) {
-		t.Errorf("the parked rules are %v, want exactly %v", got, want)
+		t.Errorf("the grouped rules are %v, want exactly %v", got, want)
 	}
 }
 
-// parkedRuleNames reads the directories List deliberately leaves out, which is the
-// only way to see the shipped set now that all seven of them are parked.
-func parkedRuleNames(t *testing.T) []string {
+// groupedRuleNames reads the directories List deliberately leaves out, which is
+// the only way to see the shipped set now that all seven of them are parked.
+//
+// Two populations are parked here and only one of them is aritu's: the grouped
+// rules sit under a single _, and the rules this repository is still writing
+// prompts for sit under __. aritu draws no distinction — anything with a leading _
+// is parked and that is all it knows — so the depth is this repository's own
+// bookkeeping, and the shipped set is the shallow one.
+func groupedRuleNames(t *testing.T) []string {
 	t.Helper()
 	entries, err := os.ReadDir(shippedRulesDir)
 	if err != nil {
@@ -79,12 +85,16 @@ func parkedRuleNames(t *testing.T) []string {
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() && rule.IsParked(entry.Name()) {
+		if entry.IsDir() && isGroupedRule(entry.Name()) {
 			names = append(names, entry.Name())
 		}
 	}
 	slices.Sort(names)
 	return names
+}
+
+func isGroupedRule(name string) bool {
+	return rule.IsParked(name) && !strings.HasPrefix(name, "__")
 }
 
 func TestEveryShippedRuleDeclaresTheLevelAndEvidenceItsPropertyNeeds(t *testing.T) {
