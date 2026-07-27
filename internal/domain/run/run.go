@@ -22,6 +22,12 @@ type Options struct {
 	Model  string
 	Effort string
 
+	// IsTargeted reports whether a rule is about a file, so that a rule and a file
+	// it has nothing to say about form no target at all. A run naming no predicate
+	// pairs everything with everything, which is what a caller handing over two
+	// lists it has already narrowed means.
+	IsTargeted func(judged rule.Rule, file string) bool
+
 	// Observe is handed each target as it finishes, in the order Format prints
 	// them. Calls are serial, so an implementation writing to a terminal needs no
 	// lock of its own.
@@ -41,28 +47,27 @@ type Envelope struct {
 	Reports []lint.Report `json:"reports"`
 }
 
-// Run judges every file against every rule. Results come back ordered by file then
-// rule however the calls interleave, and a target that errors is recorded rather
-// than aborting the run, so one unreachable file cannot hide the rest.
+// Run judges every file against every rule that is about it. Results come back
+// ordered by file then rule however the calls interleave, and a target that errors
+// is recorded rather than aborting the run, so one unreachable file cannot hide the
+// rest.
 //
 // Each file is enumerated once, at test granularity, however many rules judge it;
 // the coarser levels roll up from that list. How many calls run at once is bounded
 // by the ask, not here.
 func Run(ctx context.Context, ask service.Ask, opts Options) []Result {
-	results := make([]Result, len(opts.Files)*len(opts.Rules))
+	targets := targetsOf(opts)
+	results := make([]Result, len(targets))
 	leaves := newLeafCache()
 	landed := make(chan int, len(results))
 	var wg sync.WaitGroup
-	for f, file := range opts.Files {
-		for r, judged := range opts.Rules {
-			at := f*len(opts.Rules) + r
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				results[at] = judge(ctx, ask, leaves, targetFor(opts, judged, file))
-				landed <- at
-			}()
-		}
+	for at, target := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[at] = judge(ctx, ask, leaves, target)
+			landed <- at
+		}()
 	}
 	go func() {
 		wg.Wait()
@@ -70,6 +75,31 @@ func Run(ctx context.Context, ask service.Ask, opts Options) []Result {
 	}()
 	observeInOrder(landed, results, orNoop(opts.Observe))
 	return results
+}
+
+// targetsOf pairs each file with the rules that are about it, walking files in
+// order and rules in order. That is the reading order Format prints in, with the
+// pairs nobody asked for left out rather than judged.
+func targetsOf(opts Options) []lint.Options {
+	isTargeted := orEveryPair(opts.IsTargeted)
+	targets := make([]lint.Options, 0, len(opts.Files)*len(opts.Rules))
+	for _, file := range opts.Files {
+		for _, judged := range opts.Rules {
+			if isTargeted(judged, file) {
+				targets = append(targets, targetFor(opts, judged, file))
+			}
+		}
+	}
+	return targets
+}
+
+// orEveryPair keeps the pairing loop free of a nil check per pair, the way orNoop
+// keeps the ordering loop free of one per target.
+func orEveryPair(isTargeted func(rule.Rule, string) bool) func(rule.Rule, string) bool {
+	if isTargeted != nil {
+		return isTargeted
+	}
+	return func(rule.Rule, string) bool { return true }
 }
 
 // observeInOrder hands each finished target to the observer in the order Format

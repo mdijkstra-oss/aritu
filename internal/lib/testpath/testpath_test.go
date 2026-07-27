@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+// TestExtensions pins the list a sweep generates its candidate files from. It is
+// read off the same index the table is looked up through, so an ecosystem added as
+// a row widens it with no second edit — and this is what would notice if it stopped
+// being the same list.
+func TestExtensions(t *testing.T) {
+	want := []string{".cjs", ".cts", ".go", ".java", ".js", ".jsx", ".mjs", ".mts", ".py", ".ts", ".tsx"}
+
+	if got := Extensions(); !slices.Equal(got, want) {
+		t.Errorf("Extensions() = %v, want %v", got, want)
+	}
+}
+
 func TestIsTestFile(t *testing.T) {
 	tests := []struct {
 		name string

@@ -28,8 +28,11 @@ beside them, so it cannot drift.
 ## Use
 
 ```sh
-# every rule over one file
+# every rule that is about it, over one file
 aritu apply internal/parser/parser_test.go
+
+# everything the enabled rules target
+aritu apply
 
 # every rule over everything a pattern matches
 aritu apply 'internal/**/*_test.go'
@@ -49,6 +52,15 @@ so a quoted pattern and one your shell already expanded reach the same set — t
 run does not change because you moved it from zsh to bash. A pattern matching
 nothing is an error rather than a quiet success, and overlapping patterns judge a
 file once.
+
+Naming no pattern sweeps everything the enabled rules target, so enabling a rule is
+the whole of enabling it — there is no second list of paths to remember to widen.
+
+A pattern says which files to consider; each rule's `targets` says which of them it
+is handed. Name a document alongside a test file and the rules about tests judge
+only the test file. Name one that **no** enabled rule is about and that is an error
+and exit `2`, not a silent skip: nothing could have judged it, and a sweep that
+quietly dropped it would read exactly like one that covered everything.
 
 Omit `--rule` and every rule in the rules directory runs; repeat it to pick a few.
 
@@ -152,8 +164,9 @@ rules:
   dir: ./rules
   enabled: [proves-what-it-claims, tests-one-thing]   # omit for all
 
-include:
-  - 'internal/**/*_test.go'
+targets:
+  tests: ['internal/**/*_test.go', 'cmd/**/*_test.go']   # replaces the built-in
+  migrations: ['db/migrate/**/*.sql']                    # a kind of your own
 ```
 
 `service.endpoint` is the base URL of any Responses-compatible API — a gateway, a
@@ -171,8 +184,19 @@ minutes into a sweep:
 aritu: service.auth_token_var names $ARITU_TOKEN, which is not set
 ```
 
-`include` supplies the targets for a bare `aritu apply`. Precedence is built-in
-defaults, then the file, then flags — so `--votes 2` beats `votes: 4` in the file.
+Precedence is built-in defaults, then the file, then flags — so `--votes 2` beats
+`votes: 4` in the file.
+
+`targets` is this repository's answer to which of its files are of a given kind. A
+key matching a built-in kind **replaces** it outright, patterns and refinement
+together: a repository overriding `tests` is saying it knows better than the naming
+conventions aritu ships, and quietly keeping those as a filter over your patterns
+would make the override a lie. A key nobody built in defines a new kind, which a
+rule you write can then be about.
+
+Overriding `tests` is how a repository keeps a sweep off files that are test-shaped
+but not its tests — aritu's own `aritu.yml` does exactly that, because its rule
+fixtures are bad tests on purpose.
 
 aritu searches upward from the working directory, so running from a subdirectory
 behaves the same as running from the root, and `--config` points somewhere else
@@ -226,6 +250,7 @@ anything else possible.
 
 ```markdown
 ---
+targets: [tests]
 include: [tests]
 include_source: false
 granularity: test_case
@@ -233,11 +258,26 @@ granularity: test_case
 A test's verdict must hang on the behaviour it is named for...
 ```
 
-`include_source` and `granularity` are required. Defaulting either one silently
-changes what the model sees or what it judges, and nothing would report it. They are
-also what decides which
-properties can share a rule: two properties that disagree about either cannot share
-a verdict call however similar they read.
+`targets` names the kinds of file the rule is about, and is what makes a rule about
+something other than tests runnable: aritu ships `tests`, `code` and `docs`, and
+`aritu.yml` can replace any of them or add its own. `code` deliberately overlaps
+`tests` — a test file has comments like any other source file — because kinds are
+named matchers rather than a partition of the tree.
+
+`targets`, `include_source` and `granularity` are all required. Defaulting any of
+them silently changes which files reach the model, what it sees, or what it judges,
+and nothing would report it. A `targets` typo is the sharpest case: `[test]` for
+`[tests]` would match no file, run nothing, and exit `0`. So an unknown kind fails
+when the rule is loaded, naming the ones there are, before a single model call — and
+so does an empty list, which is a rule that could never run.
+
+`targets` and `include` stay separate keys even though every shipped rule sets both
+to `[tests]`. They answer different questions: a rule about comments targets `code`
+and wants no fragment at all.
+
+`include_source` and `granularity` are also what decides which properties can share
+a rule: two properties that disagree about either cannot share a verdict call
+however similar they read.
 
 ### The seven rules
 
@@ -375,6 +415,10 @@ pass-ts-terse-names-state-outcomes               pass    hold    14.1s    clampP
 The two `numbered-cases` fixtures are the pair that keeps this rule honest: numbered case
 labels are a violation under a test that states no behaviour and are not one under a test
 that does, and only having both in the set proves the rule can tell them apart.
+
+A fixture's files are named by its directory, never by a kind: a rule's `targets`
+are not consulted anywhere in a `selftest` run. Otherwise a rule's self-test would
+depend on the `aritu.yml` of whichever repository the rule happened to sit in.
 
 `selftest` is `apply` in a loop — same prompt, same voting, same code path. It adds
 only the comparison against the directory prefix and the table. It compares counts,

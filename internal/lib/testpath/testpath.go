@@ -6,6 +6,7 @@ package testpath
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,6 +18,13 @@ import (
 func IsTestFile(path string) bool {
 	found, isKnown := conventionFor(path)
 	return isKnown && len(sourceStemsFor(found, path)) > 0
+}
+
+// Extensions lists every file extension the conventions table covers, sorted. It
+// reads the same index the table is looked up through, so an ecosystem added as a
+// row widens it with no second edit.
+func Extensions() []string {
+	return slices.Sorted(maps.Keys(conventionsByExtension))
 }
 
 // SourceCandidates lists where the implementation a test file covers could sit,

@@ -249,6 +249,149 @@ func TestExpand(t *testing.T) {
 	}
 }
 
+// TestExpandGenerated pins the one thing it does differently. A generated pattern
+// spans every ecosystem aritu knows, so the ones for the ecosystems a repository
+// does not use match nothing and always will; everything else Expand refuses, it
+// refuses too.
+func TestExpandGenerated(t *testing.T) {
+	tests := []struct {
+		name       string
+		patterns   []string
+		unreadable string
+		want       []string
+		wantErr    error
+		wantNamed  string
+	}{
+		{
+			name:     "a pattern matching nothing contributes nothing rather than failing",
+			patterns: []string{"a/**/*_spec.rb"},
+			want:     nil,
+		},
+		{
+			name:     "the patterns beside it still contribute",
+			patterns: []string{"a/**/*_spec.rb", "a/*_test.go"},
+			want:     []string{"a/one_test.go"},
+		},
+		{
+			name:     "every pattern matching nothing yields the empty sweep",
+			patterns: []string{"a/**/*_spec.rb", "a/**/*.kt"},
+			want:     nil,
+		},
+		{
+			name:     "a file several patterns cover is returned once",
+			patterns: []string{"a/**/*_test.go", "a/b/**/*_test.go"},
+			want:     []string{"a/b/c/three_test.go", "a/b/two_test.go", "a/one_test.go"},
+		},
+		{
+			name:      "a malformed pattern is a mistake rather than an empty set",
+			patterns:  []string{"a/[_test.go"},
+			wantErr:   doublestar.ErrBadPattern,
+			wantNamed: "a/[_test.go",
+		},
+		{
+			name:       "an unreadable directory still fails rather than narrowing the set",
+			patterns:   []string{"a/**/*_test.go"},
+			unreadable: "a/b",
+			wantErr:    fs.ErrPermission,
+			wantNamed:  "a/**/*_test.go",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unreadable != "" && os.Geteuid() == 0 {
+				t.Skip("root reads a directory whatever its mode")
+			}
+			root := buildTree(t)
+			if tt.unreadable != "" {
+				sealDir(t, filepath.Join(root, tt.unreadable))
+			}
+
+			got, err := ExpandGenerated(rooted(root, tt.patterns))
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ExpandGenerated() error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantNamed != "" && !strings.Contains(err.Error(), tt.wantNamed) {
+				t.Errorf("ExpandGenerated() error = %v, want it to name %q", err, tt.wantNamed)
+			}
+			if want := rooted(root, tt.want); !slices.Equal(got, want) {
+				t.Errorf("ExpandGenerated() = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestRooted(t *testing.T) {
+	tests := []struct {
+		name string
+		base string
+		path string
+		want string
+	}{
+		{
+			name: "a relative path resolves against the base",
+			base: "/repo",
+			path: "internal/parser_test.go",
+			want: "/repo/internal/parser_test.go",
+		},
+		{
+			name: "a relative pattern keeps its metacharacters",
+			base: "/repo",
+			path: "internal/**/*_test.go",
+			want: "/repo/internal/**/*_test.go",
+		},
+		{
+			name: "a path above the base resolves to where it points",
+			base: "/repo/internal",
+			path: "../cmd/main_test.go",
+			want: "/repo/cmd/main_test.go",
+		},
+		{
+			name: "an absolute path is left as it was written",
+			base: "/repo",
+			path: "/srv/checkout/parser_test.go",
+			want: "/srv/checkout/parser_test.go",
+		},
+		{
+			name: "nothing written resolves to nothing",
+			base: "/repo",
+			path: "",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Rooted(tt.base, tt.path); got != tt.want {
+				t.Errorf("Rooted(%q, %q) = %q, want %q", tt.base, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValid(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		want    bool
+	}{
+		{name: "a literal path is well formed", pattern: "a/one_test.go", want: true},
+		{name: "so is one spanning segments", pattern: "a/**/*_test.go", want: true},
+		{name: "so is a character class that closes", pattern: "a/[a-c]_test.go", want: true},
+		{name: "an unterminated character class is not", pattern: "a/[_test.go"},
+		{name: "neither is an unterminated alternative", pattern: "{a,b/*_test.go"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValid(tt.pattern); got != tt.want {
+				t.Errorf("IsValid(%q) = %t, want %t", tt.pattern, got, tt.want)
+			}
+		})
+	}
+}
+
 var treeFiles = []string{
 	"a/one_test.go",
 	"a/helper.go",
