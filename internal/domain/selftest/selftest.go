@@ -13,7 +13,7 @@ import (
 
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
-	"github.com/matthijn/aritu/internal/lib/claudecli"
+	"github.com/matthijn/aritu/internal/lib/service"
 	"github.com/matthijn/aritu/internal/lib/vote"
 )
 
@@ -40,7 +40,7 @@ type Options struct {
 // recorded rather than aborting the run, so one unreachable call cannot hide the
 // rest of the table. How many calls actually run at once is bounded by the ask,
 // not here.
-func Run(ctx context.Context, ask claudecli.Ask, opts Options, fixtures []rule.Fixture) []Result {
+func Run(ctx context.Context, ask service.Ask, opts Options, fixtures []rule.Fixture) []Result {
 	results := make([]Result, len(fixtures))
 	var wg sync.WaitGroup
 	for i, fixture := range fixtures {
@@ -113,7 +113,7 @@ func FormatDuration(d time.Duration) string {
 	return d.Round(100 * time.Millisecond).String()
 }
 
-func judge(ctx context.Context, ask claudecli.Ask, opts Options, fixture rule.Fixture) Result {
+func judge(ctx context.Context, ask service.Ask, opts Options, fixture rule.Fixture) Result {
 	started := time.Now()
 	report, err := lint.Apply(ctx, ask, lint.Options{
 		Rule:   opts.Rule,
@@ -148,8 +148,8 @@ func detailOf(result Result) string {
 	return formatVerdicts(result.Report.Verdicts)
 }
 
-// singleLine flattens an error whose text this package does not author. A failing
-// claude subprocess contributes its stderr verbatim, and an embedded newline would
+// singleLine flattens an error whose text this package does not author. An
+// endpoint contributes its own message verbatim, and an embedded newline would
 // otherwise break the row apart and misalign every column after it.
 func singleLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")

@@ -18,8 +18,8 @@ import (
 	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/domain/run"
 	"github.com/matthijn/aritu/internal/domain/selftest"
-	"github.com/matthijn/aritu/internal/lib/claudecli"
 	"github.com/matthijn/aritu/internal/lib/glob"
+	"github.com/matthijn/aritu/internal/lib/service"
 )
 
 func main() {
@@ -32,14 +32,13 @@ func main() {
 type CLI struct {
 	Config   string        `help:"Config file to use instead of searching upward for aritu.yml." placeholder:"PATH"`
 	Rule     []string      `help:"Rule to run; repeat for several. Every rule in the rules directory when omitted." placeholder:"NAME" sep:"none"`
-	Model    string        `help:"Model name passed to the claude CLI." default:"${model}"`
-	Effort   string        `help:"Reasoning effort: low, medium, high, xhigh or max. Empty leaves the CLI default." default:"${effort}"`
+	Model    string        `help:"Model name sent to the service endpoint." default:"${model}"`
+	Effort   string        `help:"Reasoning effort: low, medium, high, xhigh or max. Empty leaves the endpoint default." default:"${effort}"`
 	Votes    int           `help:"Rounds that must all agree before a unit passes." default:"${votes}"`
 	Jobs     int           `help:"Model calls allowed in flight at once." default:"${jobs}"`
 	Output   string        `help:"How to render the report: pretty or json." default:"${output}"`
 	Rules    string        `help:"Directory holding one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
-	Claude   string        `help:"claude CLI binary to invoke." default:"${claude}"`
-	Timeout  time.Duration `help:"Deadline for the whole run, so a hung CLI cannot hang a commit hook." default:"${timeout}"`
+	Timeout  time.Duration `help:"Deadline for the whole run, so a hung endpoint cannot hang a commit hook." default:"${timeout}"`
 	Apply    ApplyCmd      `cmd:"" help:"Judge files against rules."`
 	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
 
@@ -78,7 +77,6 @@ var defaults = kong.Vars{
 	"jobs":    "5",
 	"output":  "pretty",
 	"rules":   "./rules",
-	"claude":  "claude",
 	"timeout": "10m",
 }
 
@@ -127,10 +125,15 @@ func execute(args []string, stdout, stderr io.Writer) lint.Exit {
 		fmt.Fprintf(stderr, "aritu: %v\n", err)
 		return lint.ExitError
 	}
+	ask, err := askFor(&cli)
+	if err != nil {
+		fmt.Fprintf(stderr, "aritu: %v\n", err)
+		return lint.ExitError
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cli.Timeout)
 	defer cancel()
-	return commandFor(kctx.Selected().Name)(ctx, &cli, stdout, stderr)
+	return commandFor(kctx.Selected().Name)(ctx, &cli, ask, stdout, stderr)
 }
 
 // newParser builds the grammar. Exit is replaced because kong's help flag ends
@@ -168,12 +171,14 @@ func validate(cli CLI) error {
 		return fmt.Errorf("unknown output %q, want pretty or json", cli.Output)
 	}
 	if !isKnownEffort(cli.Effort) {
-		return fmt.Errorf("unknown effort %q, want one of %s, or empty for the CLI default", cli.Effort, strings.Join(efforts, ", "))
+		return fmt.Errorf("unknown effort %q, want one of %s, or empty for the endpoint default", cli.Effort, strings.Join(efforts, ", "))
 	}
 	return nil
 }
 
-// efforts are the levels the claude CLI accepts.
+// efforts are the levels aritu offers. The Responses API also accepts none and
+// minimal, which this tool has no use for: a linter that reasons about nothing is
+// not answering the question it was asked.
 var efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 func isKnownEffort(effort string) bool {
@@ -182,7 +187,7 @@ func isKnownEffort(effort string) bool {
 
 // command is one subcommand's body. Both take the writers rather than reaching
 // for the process streams, so a whole command can be exercised against buffers.
-type command func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit
+type command func(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit
 
 var commands = map[string]command{
 	"apply":    runApply,
@@ -200,7 +205,7 @@ func commandFor(name string) command {
 // runApply sweeps every rule over every target. The report is written before the
 // exit code is decided, including when the sweep could not start: a caller told
 // nothing at all cannot tell an empty run from a clean one.
-func runApply(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+func runApply(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit {
 	started := time.Now()
 	opts, setupErr := applyOptions(cli)
 	report := reporterFor(cli.Output, stdout, wantsColour(stdout))
@@ -209,7 +214,7 @@ func runApply(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit
 	if setupErr == nil {
 		run.Announce(stderr, opts)
 		opts.Observe = report.observe
-		results = run.Run(ctx, askFor(cli), opts)
+		results = run.Run(ctx, ask, opts)
 	}
 	if err := report.finish(sweep{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
 		fmt.Fprintf(stderr, "aritu apply: %v\n", err)
@@ -259,14 +264,13 @@ func targetsFor(patterns, include []string) ([]string, error) {
 // runSelftest runs each named rule against its own fixtures, one table per rule.
 // A rule that cannot be loaded still prints its table, because the table is the
 // diagnostic and an empty one says which rule produced nothing.
-func runSelftest(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+func runSelftest(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit {
 	names, err := ruleNamesFor(cli)
 	if err != nil {
 		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
 		return lint.ExitError
 	}
 
-	ask := askFor(cli)
 	exit := lint.ExitPass
 	for _, name := range names {
 		exit = worse(exit, selftestRule(ctx, ask, cli, name, stdout, stderr))
@@ -274,7 +278,7 @@ func runSelftest(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.E
 	return exit
 }
 
-func selftestRule(ctx context.Context, ask claudecli.Ask, cli *CLI, name string, stdout, stderr io.Writer) lint.Exit {
+func selftestRule(ctx context.Context, ask service.Ask, cli *CLI, name string, stdout, stderr io.Writer) lint.Exit {
 	started := time.Now()
 	opts, results, runErr := selftestResults(ctx, ask, cli, name)
 
@@ -289,7 +293,7 @@ func selftestRule(ctx context.Context, ask claudecli.Ask, cli *CLI, name string,
 	return selftest.ExitFor(results)
 }
 
-func selftestResults(ctx context.Context, ask claudecli.Ask, cli *CLI, name string) (selftest.Options, []selftest.Result, error) {
+func selftestResults(ctx context.Context, ask service.Ask, cli *CLI, name string) (selftest.Options, []selftest.Result, error) {
 	opts := selftest.Options{
 		Rule:   rule.Rule{Name: name},
 		Votes:  cli.Votes,
@@ -354,15 +358,34 @@ func ruleNamesFor(cli *CLI) ([]string, error) {
 // small per-call rate makes every sweep report an error it did not earn.
 const attempts = 3
 
-// askFor bounds concurrency at the seam every model call passes through, so
+// askFor resolves the endpoint and its credential before anything is asked, so a
+// misnamed variable costs one line at startup rather than a wall of 401s arriving
+// minutes into a sweep.
+//
+// It then bounds concurrency at the seam every model call passes through, so
 // file-level, rule-level and vote-level parallelism cannot multiply into a
-// process storm. One ask serves a whole run; a second would be a second ceiling.
+// request storm. One ask serves a whole run; a second would be a second ceiling.
 //
 // The throttle wraps the retry rather than the other way round, so a call keeps
 // its one slot across its attempts. Acquiring a slot per attempt would let a run
 // where many calls retry at once outrun the ceiling it was given.
-func askFor(cli *CLI) claudecli.Ask {
-	return claudecli.Throttle(claudecli.Retry(claudecli.Exec(cli.Claude), attempts), cli.Jobs)
+func askFor(cli *CLI) (service.Ask, error) {
+	endpoint := valueOr(cli.Loaded.Service.Endpoint)
+	if endpoint == "" {
+		return nil, fmt.Errorf("no service.endpoint configured: set one in %s so model calls have somewhere to go", config.FileName)
+	}
+	token, err := service.Token(valueOr(cli.Loaded.Service.AuthTokenVar), os.LookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	return service.Throttle(service.Retry(service.New(endpoint, token), attempts), cli.Jobs), nil
+}
+
+func valueOr(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // sweep is everything a reporter needs. Both reporters take it so the choice of
@@ -447,7 +470,8 @@ func wantsColour(w io.Writer) bool {
 
 // configPathFor honours an explicit --config over the upward search entirely, so
 // a file named on the command line is the only one consulted. Finding none is not
-// an error: a repository without an aritu.yml runs on the built-in defaults.
+// an error here: askFor is where a run without an endpoint stops, and it names the
+// key that is missing rather than the file that is.
 func configPathFor(explicit string) (path string, isFound bool, err error) {
 	if explicit != "" {
 		return explicit, true, nil

@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,20 +23,32 @@ import (
 )
 
 func TestExecute(t *testing.T) {
-	neutral := t.TempDir()
+	// t.Setenv registers the restore; the Unsetenv that follows is what makes the
+	// variable absent rather than empty, which is the case the run has to catch.
+	t.Setenv(unsetVariable, "")
+	if err := os.Unsetenv(unsetVariable); err != nil {
+		t.Fatalf("unsetting %s: %v", unsetVariable, err)
+	}
+
+	satisfied := serveStubModel(t, true)
+	dissatisfied := serveStubModel(t, false)
+	unreachable := serveRejectingModel(t)
+
+	neutral := writeRepo(t, serviceBlock(satisfied))
+	dissatisfiedRepo := writeRepo(t, serviceBlock(dissatisfied))
+	unreachableRepo := writeRepo(t, serviceBlock(unreachable))
 	emptyRules := t.TempDir()
 	soloRules := writeRules(t, "solo")
 	twoRules := writeRules(t, "first", "second")
 	targets := writeTargets(t)
 	alpha := filepath.Join(targets, "alpha_test.go")
 
-	satisfiedClaude := writeStubClaude(t, true)
-	dissatisfiedClaude := writeStubClaude(t, false)
-	failingClaude := writeFailingClaude(t)
+	noServiceRepo := writeRepo(t, "rules:\n  dir: ./rules\n")
+	unsetTokenRepo := writeRepo(t, serviceBlock(satisfied)+"  auth_token_var: "+unsetVariable+"\n")
 
-	votesRepo := writeRepo(t, "votes: 3\nrules:\n  dir: ./rules\n")
+	votesRepo := writeRepo(t, "votes: 3\nrules:\n  dir: ./rules\n"+serviceBlock(satisfied))
 	typoRepo := writeRepo(t, "vote: 4\n")
-	includeRepo := writeRepo(t, "rules:\n  dir: ./rules\ninclude:\n  - 'internal/**/*_test.go'\n")
+	includeRepo := writeRepo(t, "rules:\n  dir: ./rules\ninclude:\n  - 'internal/**/*_test.go'\n"+serviceBlock(satisfied))
 	votesRepoPkg := filepath.Join(votesRepo, "internal", "pkg")
 
 	tests := []struct {
@@ -142,46 +157,48 @@ func TestExecute(t *testing.T) {
 		},
 		{
 			name:       "every unit satisfying its rule",
-			args:       []string{"apply", "--rules", soloRules, "--claude", satisfiedClaude, alpha},
+			args:       []string{"apply", "--rules", soloRules, alpha},
 			want:       lint.ExitPass,
 			wantStdout: []string{"alpha_test.go", "solo", "✓ TestDoesAThing", "1 passed"},
 		},
 		{
 			name:       "a sweep says what it covers before its first model call",
-			args:       []string{"apply", "--rules", twoRules, "--claude", satisfiedClaude, alpha},
+			args:       []string{"apply", "--rules", twoRules, alpha},
 			want:       lint.ExitPass,
 			wantStdout: []string{"alpha_test.go", "first", "second"},
 			wantStderr: []string{"judging 1 file against 2 rules, 1 vote"},
 		},
 		{
 			name:       "a unit falling short of its rule",
-			args:       []string{"apply", "--rules", soloRules, "--claude", dissatisfiedClaude, alpha},
+			dir:        dissatisfiedRepo,
+			args:       []string{"apply", "--rules", soloRules, alpha},
 			want:       lint.ExitFail,
 			wantStdout: []string{"✗ TestDoesAThing", "1 failed"},
 		},
 		{
 			name:       "a target that could not be run is still reported",
-			args:       []string{"apply", "--rules", soloRules, "--claude", failingClaude, alpha},
+			dir:        unreachableRepo,
+			args:       []string{"apply", "--rules", soloRules, alpha},
 			want:       lint.ExitError,
-			wantStdout: []string{"alpha_test.go", "could not run", "exit status 1"},
+			wantStdout: []string{"alpha_test.go", "could not run", "401"},
 		},
 		{
 			name:        "json emits one envelope covering every file and rule",
-			args:        []string{"apply", "--output", "json", "--rules", twoRules, "--claude", satisfiedClaude, alpha},
+			args:        []string{"apply", "--output", "json", "--rules", twoRules, alpha},
 			want:        lint.ExitPass,
 			wantStdout:  []string{`"reports"`, `"rule": "first"`, `"rule": "second"`, `"votes": 1`},
 			wantReports: 2,
 		},
 		{
 			name:        "a repeated rule flag judges each rule it names",
-			args:        []string{"apply", "--output", "json", "--rules", twoRules, "--rule", "second", "--rule", "first", "--claude", satisfiedClaude, alpha},
+			args:        []string{"apply", "--output", "json", "--rules", twoRules, "--rule", "second", "--rule", "first", alpha},
 			want:        lint.ExitPass,
 			wantStdout:  []string{`"rule": "first"`, `"rule": "second"`},
 			wantReports: 2,
 		},
 		{
 			name:        "overlapping patterns judge a file once",
-			args:        []string{"apply", "--output", "json", "--rules", soloRules, "--claude", satisfiedClaude, filepath.Join(targets, "*_test.go"), alpha},
+			args:        []string{"apply", "--output", "json", "--rules", soloRules, filepath.Join(targets, "*_test.go"), alpha},
 			want:        lint.ExitPass,
 			wantStdout:  []string{"alpha_test.go", "beta_test.go"},
 			wantReports: 2,
@@ -189,35 +206,35 @@ func TestExecute(t *testing.T) {
 		{
 			name:       "the config file supplies the vote count and the rules directory",
 			dir:        votesRepoPkg,
-			args:       []string{"apply", "--output", "json", "--claude", satisfiedClaude, "alpha_test.go"},
+			args:       []string{"apply", "--output", "json", "alpha_test.go"},
 			want:       lint.ExitPass,
 			wantStdout: []string{`"rule": "solo"`, `"votes": 3`},
 		},
 		{
 			name:       "a flag overrides the config file",
 			dir:        votesRepoPkg,
-			args:       []string{"apply", "--output", "json", "--votes", "1", "--claude", satisfiedClaude, "alpha_test.go"},
+			args:       []string{"apply", "--output", "json", "--votes", "1", "alpha_test.go"},
 			want:       lint.ExitPass,
 			wantStdout: []string{`"votes": 1`},
 		},
 		{
 			name:       "a misspelled config key fails the run naming the key",
 			dir:        typoRepo,
-			args:       []string{"apply", "--claude", satisfiedClaude, "internal/pkg/alpha_test.go"},
+			args:       []string{"apply", "internal/pkg/alpha_test.go"},
 			want:       lint.ExitError,
 			wantStderr: []string{"vote"},
 		},
 		{
 			name:        "the include list supplies the targets when no pattern is given",
 			dir:         includeRepo,
-			args:        []string{"apply", "--output", "json", "--claude", satisfiedClaude},
+			args:        []string{"apply", "--output", "json"},
 			want:        lint.ExitPass,
 			wantStdout:  []string{"alpha_test.go"},
 			wantReports: 1,
 		},
 		{
 			name:       "an explicit config is used and the upward search is skipped",
-			args:       []string{"apply", "--config", filepath.Join(votesRepo, "aritu.yml"), "--output", "json", "--claude", satisfiedClaude, filepath.Join(votesRepoPkg, "alpha_test.go")},
+			args:       []string{"apply", "--config", filepath.Join(votesRepo, "aritu.yml"), "--output", "json", filepath.Join(votesRepoPkg, "alpha_test.go")},
 			want:       lint.ExitPass,
 			wantStdout: []string{`"rule": "solo"`, `"votes": 3`},
 		},
@@ -230,15 +247,30 @@ func TestExecute(t *testing.T) {
 		},
 		{
 			name:       "selftest still prints its table when the model cannot be reached",
-			args:       []string{"selftest", "--rules", soloRules, "--claude", failingClaude},
+			dir:        unreachableRepo,
+			args:       []string{"selftest", "--rules", soloRules},
 			want:       lint.ExitError,
-			wantStdout: []string{"FIXTURE", "pass-only", "ERROR", "exit status 1", "0/1 fixtures hold"},
+			wantStdout: []string{"FIXTURE", "pass-only", "ERROR", "401", "0/1 fixtures hold"},
 		},
 		{
 			name:       "selftest with no rule named exercises every rule",
-			args:       []string{"selftest", "--rules", twoRules, "--claude", satisfiedClaude},
+			args:       []string{"selftest", "--rules", twoRules},
 			want:       lint.ExitPass,
 			wantStdout: []string{"rule: first", "rule: second", "1/1 fixtures hold"},
+		},
+		{
+			name:       "a repository with no endpoint configured says where to set one",
+			dir:        noServiceRepo,
+			args:       []string{"apply", "--rules", soloRules, alpha},
+			want:       lint.ExitError,
+			wantStderr: []string{"no service.endpoint configured", "aritu.yml"},
+		},
+		{
+			name:       "an auth_token_var naming a variable nobody set stops the run before its first request",
+			dir:        unsetTokenRepo,
+			args:       []string{"apply", "--rules", soloRules, alpha},
+			want:       lint.ExitError,
+			wantStderr: []string{"service.auth_token_var names $" + unsetVariable, "not set"},
 		},
 		{
 			name:       "selftest over a rules directory holding no rules",
@@ -250,7 +282,7 @@ func TestExecute(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(orDefault(tc.dir, neutral))
+			t.Chdir(cmp.Or(tc.dir, neutral))
 			var stdout, stderr bytes.Buffer
 
 			got := execute(tc.args, &stdout, &stderr)
@@ -297,7 +329,6 @@ func TestResolvedFlags(t *testing.T) {
 		Effort:  "medium",
 		Output:  "pretty",
 		Rules:   "./rules",
-		Claude:  "claude",
 		Votes:   1,
 		Jobs:    5,
 		Timeout: 10 * time.Minute,
@@ -329,15 +360,15 @@ func TestResolvedFlags(t *testing.T) {
 			args: []string{"apply", "parser_test.go", "--model", "opus", "--votes", "2"},
 			want: withTargets(settings{
 				Model: "opus", Effort: "medium", Output: "pretty", Rules: "./rules",
-				Claude: "claude", Votes: 2, Jobs: 5, Timeout: 10 * time.Minute,
+				Votes: 2, Jobs: 5, Timeout: 10 * time.Minute,
 			}, "parser_test.go"),
 		},
 		{
 			name: "every flag overridden",
-			args: []string{"selftest", "--model", "haiku", "--votes", "7", "--effort", "low", "--output", "json", "--rules", "/etc/aritu/rules", "--claude", "/usr/local/bin/claude", "--timeout", "90s", "--jobs", "3"},
+			args: []string{"selftest", "--model", "haiku", "--votes", "7", "--effort", "low", "--output", "json", "--rules", "/etc/aritu/rules", "--timeout", "90s", "--jobs", "3"},
 			want: settings{
 				Model: "haiku", Effort: "low", Output: "json", Rules: "/etc/aritu/rules",
-				Claude: "/usr/local/bin/claude", Votes: 7, Jobs: 3, Timeout: 90 * time.Second,
+				Votes: 7, Jobs: 3, Timeout: 90 * time.Second,
 			},
 		},
 		{
@@ -345,7 +376,7 @@ func TestResolvedFlags(t *testing.T) {
 			args: []string{"apply", "--rule", "one-reason-to-fail", "--rule", "named-for-behavior", "parser_test.go"},
 			want: withTargets(settings{
 				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: "./rules",
-				Claude: "claude", Votes: 1, Jobs: 5, Timeout: 10 * time.Minute,
+				Votes: 1, Jobs: 5, Timeout: 10 * time.Minute,
 				Rule: []string{"one-reason-to-fail", "named-for-behavior"},
 			}, "parser_test.go"),
 		},
@@ -354,7 +385,7 @@ func TestResolvedFlags(t *testing.T) {
 			args: []string{"apply", "--config", filepath.Join(votesRepo, "aritu.yml"), "parser_test.go"},
 			want: withTargets(settings{
 				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: filepath.Join(votesRepo, "rules"),
-				Claude: "claude", Votes: 3, Jobs: 5, Timeout: 10 * time.Minute,
+				Votes: 3, Jobs: 5, Timeout: 10 * time.Minute,
 			}, "parser_test.go"),
 		},
 		{
@@ -362,7 +393,7 @@ func TestResolvedFlags(t *testing.T) {
 			args: []string{"apply", "--config", filepath.Join(votesRepo, "aritu.yml"), "--votes", "2", "parser_test.go"},
 			want: withTargets(settings{
 				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: filepath.Join(votesRepo, "rules"),
-				Claude: "claude", Votes: 2, Jobs: 5, Timeout: 10 * time.Minute,
+				Votes: 2, Jobs: 5, Timeout: 10 * time.Minute,
 			}, "parser_test.go"),
 		},
 		{
@@ -370,7 +401,7 @@ func TestResolvedFlags(t *testing.T) {
 			args: []string{"apply", "--config", filepath.Join(timeoutRepo, "aritu.yml"), "parser_test.go"},
 			want: withTargets(settings{
 				Model: "opus", Effort: "high", Output: "pretty", Rules: "./rules",
-				Claude: "claude", Votes: 1, Jobs: 5, Timeout: 90 * time.Second,
+				Votes: 1, Jobs: 5, Timeout: 90 * time.Second,
 			}, "parser_test.go"),
 		},
 		{
@@ -379,7 +410,7 @@ func TestResolvedFlags(t *testing.T) {
 			args: []string{"apply", "alpha_test.go"},
 			want: withTargets(settings{
 				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: filepath.Join(votesRepo, "rules"),
-				Claude: "claude", Votes: 3, Jobs: 5, Timeout: 10 * time.Minute,
+				Votes: 3, Jobs: 5, Timeout: 10 * time.Minute,
 			}, "alpha_test.go"),
 		},
 		{
@@ -397,7 +428,7 @@ func TestResolvedFlags(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(orDefault(tc.dir, neutral))
+			t.Chdir(cmp.Or(tc.dir, neutral))
 			var cli CLI
 			parser := newParser(&cli, io.Discard, io.Discard, func(int) {})
 
@@ -429,7 +460,6 @@ type settings struct {
 	Effort   string
 	Output   string
 	Rules    string
-	Claude   string
 	Votes    int
 	Jobs     int
 	Timeout  time.Duration
@@ -443,7 +473,6 @@ func settingsOf(cli CLI) settings {
 		Effort:   cli.Effort,
 		Output:   cli.Output,
 		Rules:    cli.Rules,
-		Claude:   cli.Claude,
 		Votes:    cli.Votes,
 		Jobs:     cli.Jobs,
 		Timeout:  cli.Timeout,
@@ -662,45 +691,78 @@ func writeRepo(t *testing.T, config string) string {
 	return root
 }
 
-// writeFailingClaude installs a stand-in claude binary that always fails, so the
-// unreachable-model path can be driven for real rather than described.
-func writeFailingClaude(t *testing.T) string {
+// serveRejectingModel stands up an endpoint that refuses every call, so the
+// could-not-run path can be driven for real rather than described. It answers 401
+// rather than 500 because the SDK paces 5xx with backoff of its own, and this test
+// is about the report rather than about the retry policy.
+func serveRejectingModel(t *testing.T) string {
 	t.Helper()
-	return writeScript(t, "#!/bin/sh\nexit 1\n")
+	return serveModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"message":"no credential"}}`)
+	})
 }
 
-// writeStubClaude installs a stand-in claude binary answering both calls a target
-// costs: it recognises the enumeration by its schema and gives every unit the same
-// verdict, so a whole run is free and its outcome is fixed.
-func writeStubClaude(t *testing.T, satisfies bool) string {
+// serveStubModel stands up an endpoint answering both calls a target costs: it
+// recognises the enumeration by the schema it carries and gives every unit the
+// same verdict, so a whole run is free and its outcome is fixed.
+func serveStubModel(t *testing.T, satisfies bool) string {
 	t.Helper()
-	return writeScript(t, fmt.Sprintf(`#!/bin/sh
-schema=""
-while [ "$#" -gt 0 ]; do
-	if [ "$1" = "--json-schema" ]; then
-		schema="$2"
-	fi
-	shift
-done
-cat >/dev/null
-case "$schema" in
-	*'"names"'*)
-		printf '{"structured_output":{"names":["TestDoesAThing"]}}\n'
-		;;
-	*)
-		printf '{"structured_output":{"%s":{"satisfies":%t,"reason":"names the input the case supplies"}}}\n'
-		;;
-esac
-`, lint.UnitsFor([]string{"TestDoesAThing"})[0].Key, satisfies))
+	names := `{"names":["TestDoesAThing"]}`
+	verdicts := fmt.Sprintf(`{"%s":{"satisfies":%t,"reason":"names the input the case supplies"}}`,
+		lint.UnitsFor([]string{"TestDoesAThing"})[0].Key, satisfies)
+
+	return serveModel(t, func(w http.ResponseWriter, r *http.Request) {
+		answer := verdicts
+		if isEnumeration(t, r) {
+			answer = names
+		}
+		fmt.Fprint(w, completedWith(answer))
+	})
 }
 
-func writeScript(t *testing.T, body string) string {
+func serveModel(t *testing.T, handle http.HandlerFunc) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "claude")
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatalf("writing stand-in claude: %v", err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		handle(w, r)
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/"
+}
+
+// isEnumeration tells the two calls a target costs apart by the schema each
+// carries, which is the only thing about them the endpoint can see.
+func isEnumeration(t *testing.T, r *http.Request) bool {
+	t.Helper()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("reading the request body: %v", err)
+		return false
 	}
-	return path
+	return strings.Contains(string(body), `"names"`)
+}
+
+// completedWith wraps an answer in the envelope a Responses endpoint returns.
+func completedWith(answer string) string {
+	return fmt.Sprintf(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":%s}]}]}`, quoted(answer))
+}
+
+// unsetVariable is a name no environment carries, so the named-but-unset branch of
+// auth resolution can be driven rather than described.
+const unsetVariable = "ARITU_TOKEN_NO_ENVIRONMENT_SETS"
+
+// serviceBlock points a repository's model calls at endpoint.
+func serviceBlock(endpoint string) string {
+	return fmt.Sprintf("service:\n  endpoint: %s\n", endpoint)
+}
+
+func quoted(s string) string {
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		panic(fmt.Sprintf("a string failed to marshal, which its type makes impossible: %v", err))
+	}
+	return string(encoded)
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -720,13 +782,6 @@ func reportsIn(t *testing.T, stdout []byte) int {
 		t.Fatalf("decoding %q as a report envelope: %v", stdout, err)
 	}
 	return len(envelope.Reports)
-}
-
-func orDefault(value, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
 }
 
 // bannedWords never appear in anything aritu says to a model or shows a person.

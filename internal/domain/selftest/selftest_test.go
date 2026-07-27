@@ -15,7 +15,7 @@ import (
 
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
-	"github.com/matthijn/aritu/internal/lib/claudecli"
+	"github.com/matthijn/aritu/internal/lib/service"
 )
 
 func TestHolds(t *testing.T) {
@@ -148,7 +148,7 @@ func TestFormat(t *testing.T) {
 				},
 				{
 					Fixture:  rule.Fixture{Name: "pass-crashed", Expect: rule.ExpectPass},
-					Err:      errors.New("claudecli: claude exit status 1:\nError: connect ECONNREFUSED\n    at TCPConnectWrap.afterConnect"),
+					Err:      errors.New("service: http://gateway.internal/v1/:\nPOST \"http://gateway.internal/v1/responses\": 503\n    Service Unavailable"),
 					Duration: 40 * time.Millisecond,
 				},
 			},
@@ -156,7 +156,7 @@ func TestFormat(t *testing.T) {
 				"\n" +
 				"FIXTURE       EXPECT  RESULT  TIME  VERDICTS\n" +
 				"pass-alpha    pass    hold    1.5s  TestAlpha=2\n" +
-				"pass-crashed  pass    ERROR   40ms  claudecli: claude exit status 1: Error: connect ECONNREFUSED at TCPConnectWrap.afterConnect\n" +
+				"pass-crashed  pass    ERROR   40ms  service: http://gateway.internal/v1/: POST \"http://gateway.internal/v1/responses\": 503 Service Unavailable\n" +
 				"\n" +
 				"1/2 fixtures hold in 2.4s\n",
 		},
@@ -278,8 +278,8 @@ type reply struct {
 	verdicts string
 }
 
-func askFrom(replies map[string]reply) claudecli.Ask {
-	return func(_ context.Context, req claudecli.Request) (json.RawMessage, error) {
+func askFrom(replies map[string]reply) service.Ask {
+	return func(_ context.Context, req service.Request) (json.RawMessage, error) {
 		for marker, canned := range replies {
 			if !strings.Contains(req.Prompt, marker) {
 				continue
@@ -293,7 +293,7 @@ func askFrom(replies map[string]reply) claudecli.Ask {
 	}
 }
 
-func isNamesCall(req claudecli.Request) bool {
+func isNamesCall(req service.Request) bool {
 	return strings.Contains(string(req.Schema), `"names"`)
 }
 

@@ -24,7 +24,9 @@ votes: 4
 jobs: 3
 timeout: 1h30s
 output: json
-claude: /usr/local/bin/claude
+service:
+  endpoint: https://gateway.internal/v1
+  auth_token_var: ARITU_TOKEN
 rules:
   dir: ./rules
   enabled: [named-for-behavior, one-reason-to-fail]
@@ -34,11 +36,14 @@ include:
 `,
 			want: func(dir string) Config {
 				return Config{
-					Dir:     dir,
-					Model:   given("opus"),
-					Effort:  given("high"),
-					Output:  given("json"),
-					Claude:  given("/usr/local/bin/claude"),
+					Dir:    dir,
+					Model:  given("opus"),
+					Effort: given("high"),
+					Output: given("json"),
+					Service: Service{
+						Endpoint:     given("https://gateway.internal/v1"),
+						AuthTokenVar: given("ARITU_TOKEN"),
+					},
 					Votes:   given(4),
 					Jobs:    given(3),
 					Timeout: given(Duration(time.Hour + 30*time.Second)),
@@ -92,6 +97,31 @@ include:
   folder: ./rules
 `,
 			wantErr: "folder",
+		},
+		{
+			name:    "a misspelled service block fails the load rather than leaving the endpoint unset",
+			file:    "servce:\n  endpoint: https://gateway.internal/v1\n",
+			wantErr: "servce",
+		},
+		{
+			name: "a misspelled key inside the service block fails the load naming the key",
+			file: `service:
+  endpoint: https://gateway.internal/v1
+  auth_token: ARITU_TOKEN
+`,
+			wantErr: "auth_token",
+		},
+		{
+			name: "an endpoint on its own is a whole service block",
+			file: `service:
+  endpoint: http://localhost:8080/v1
+`,
+			want: func(dir string) Config {
+				return Config{
+					Dir:     dir,
+					Service: Service{Endpoint: given("http://localhost:8080/v1")},
+				}
+			},
 		},
 		{
 			name:    "a timeout that is not a duration fails the load naming the value",
@@ -254,7 +284,6 @@ func TestLookupOfAConfiguredValue(t *testing.T) {
 		Model:   given("opus"),
 		Effort:  given("high"),
 		Output:  given("json"),
-		Claude:  given("/usr/local/bin/claude"),
 		Votes:   given(4),
 		Jobs:    given(3),
 		Timeout: given(Duration(90 * time.Second)),
@@ -268,7 +297,6 @@ func TestLookupOfAConfiguredValue(t *testing.T) {
 		{name: "the model the file names reaches the resolver", flag: "model", want: "opus"},
 		{name: "the effort the file names reaches the resolver", flag: "effort", want: "high"},
 		{name: "the output the file names reaches the resolver", flag: "output", want: "json"},
-		{name: "the claude binary the file names reaches the resolver", flag: "claude", want: "/usr/local/bin/claude"},
 		{name: "the vote count the file sets reaches the resolver", flag: "votes", want: 4},
 		{name: "the job limit the file sets reaches the resolver", flag: "jobs", want: 3},
 		{name: "the timeout arrives as a duration rather than the yaml text", flag: "timeout", want: 90 * time.Second},
@@ -325,7 +353,6 @@ func TestLookupOfAValueTheFileNeverSet(t *testing.T) {
 		{name: "an omitted model leaves the built-in default standing", flag: "model"},
 		{name: "an omitted effort leaves the built-in default standing", flag: "effort"},
 		{name: "an omitted output leaves the built-in default standing", flag: "output"},
-		{name: "an omitted claude leaves the built-in default standing", flag: "claude"},
 		{name: "an omitted votes does not resolve to zero votes", flag: "votes"},
 		{name: "an omitted jobs does not resolve to no jobs", flag: "jobs"},
 		{name: "an omitted timeout does not resolve to an instant deadline", flag: "timeout"},

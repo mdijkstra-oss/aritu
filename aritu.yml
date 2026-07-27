@@ -1,3 +1,10 @@
+# service.endpoint has no default and answers no flag. Point it at a
+# Responses-compatible API before running aritu on this repository.
+#
+# service:
+#   endpoint: https://gateway.internal/v1
+#   auth_token_var: ARITU_TOKEN
+
 votes: 1
 
 include:

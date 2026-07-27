@@ -16,7 +16,7 @@ import (
 
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
-	"github.com/matthijn/aritu/internal/lib/claudecli"
+	"github.com/matthijn/aritu/internal/lib/service"
 )
 
 const fileSource = `package scenario
@@ -701,7 +701,7 @@ type model struct {
 	judgements   int
 }
 
-func (m *model) ask(_ context.Context, req claudecli.Request) (json.RawMessage, error) {
+func (m *model) ask(_ context.Context, req service.Request) (json.RawMessage, error) {
 	asked, isKnown := m.fileIn(req.Prompt)
 	if !isKnown {
 		return nil, fmt.Errorf("the prompt names no file the table knows")

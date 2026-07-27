@@ -19,7 +19,8 @@ is in the prompt, and the model can see what it is.
 go build -o aritu ./cmd/aritu
 ```
 
-Requires Go 1.25+ and the `claude` CLI on `PATH`, already authenticated.
+Requires Go 1.25+ and a Responses-compatible endpoint to point it at. Nothing is
+shelled out to and no vendor CLI has to be installed or authenticated.
 
 `aritu --help` lists everything; it is generated from the flags rather than written
 beside them, so it cannot drift.
@@ -132,9 +133,14 @@ diagnostic; suppressing them on failure removes the reason to have them.
 
 ## Configuration
 
-Optional. `aritu.yml` at the repository root, every key optional:
+`aritu.yml` at the repository root. Every key is optional except `service.endpoint`,
+which has no default:
 
 ```yaml
+service:
+  endpoint: https://gateway.internal/v1
+  auth_token_var: ARITU_TOKEN   # omit for an endpoint that ignores auth
+
 model: sonnet
 effort: medium
 votes: 2
@@ -148,6 +154,21 @@ rules:
 
 include:
   - 'internal/**/*_test.go'
+```
+
+`service.endpoint` is the base URL of any Responses-compatible API — a gateway, a
+proxy, a self-hosted model. There is no default: a run that silently reached a
+vendor's servers because a key was missing from the file would be a surprising
+place for a repository's source to end up.
+
+`auth_token_var` is **the name of an environment variable, never a token**. Its
+value is read at startup and sent as `Authorization: Bearer <value>`. Omit it and
+no `Authorization` header is sent at all. Name a variable that is unset and the run
+stops before its first request, rather than paying for the typo as a wall of 401s
+minutes into a sweep:
+
+```
+aritu: service.auth_token_var names $ARITU_TOKEN, which is not set
 ```
 
 `include` supplies the targets for a bare `aritu apply`. Precedence is built-in
@@ -361,8 +382,10 @@ from missing.
 
 ## How it calls the model
 
-Two kinds of call, both through the `claude` CLI via `exec`, with tools disabled
-and a replaced system prompt.
+Two kinds of call, both one non-streaming HTTP request to the configured endpoint,
+with a replaced system prompt and no tools offered. Each asks for a strict
+`json_schema` format, so the reply is the structured value rather than prose to be
+salvaged.
 
 The first enumerates the units in a file. It depends on the file and nothing else —
 the rule's text never reaches it — so **a file is enumerated once however many
@@ -377,7 +400,8 @@ serve every ecosystem.
 The second judges those units against one rule, and is handed the enumerated list
 explicitly rather than left to re-derive it. Its schema is generated per call with
 every unit named as a required key, so a duplicated, dropped or invented unit is
-rejected by the schema and retried by the CLI rather than becoming aritu's problem.
+rejected by the endpoint's strict schema enforcement rather than becoming aritu's
+problem.
 
 If a verdict still arrives naming a unit the enumeration did not list, that is an
 error and exit `2` — never a silent merge. Models are unreliable at exhaustive
@@ -393,14 +417,13 @@ which costs nothing to know and cannot be disagreed with.
 |---|---|---|
 | `--rule` | all | rule to run; repeat for several |
 | `--config` | search upward | config file to use instead of `aritu.yml` discovery |
-| `--model` | `sonnet` | model passed to the claude CLI |
+| `--model` | `sonnet` | model name sent to the endpoint |
 | `--output` | `pretty` | `pretty` for reading, `json` for parsing |
 | `--votes` | `1` | rounds that must all agree before a unit passes |
 | `--jobs` | `5` | model calls allowed in flight at once |
-| `--effort` | — | reasoning effort; empty leaves the CLI default |
+| `--effort` | — | reasoning effort; empty leaves the endpoint default |
 | `--rules` | `./rules` | directory holding one subdirectory per rule |
-| `--claude` | `claude` | claude CLI binary to invoke |
-| `--timeout` | `10m` | deadline for the whole run, so a hung CLI cannot hang a commit hook |
+| `--timeout` | `10m` | deadline for the whole run, so a hung endpoint cannot hang a commit hook |
 
 `--jobs` bounds concurrency at the one seam every model call passes through, so
 fixture-level and vote-level parallelism cannot multiply into a process storm.

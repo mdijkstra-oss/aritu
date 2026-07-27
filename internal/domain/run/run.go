@@ -11,7 +11,7 @@ import (
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/domain/selftest"
-	"github.com/matthijn/aritu/internal/lib/claudecli"
+	"github.com/matthijn/aritu/internal/lib/service"
 )
 
 // Options configures one multi-target run.
@@ -48,7 +48,7 @@ type Envelope struct {
 // Each file is enumerated once, at test granularity, however many rules judge it;
 // the coarser levels roll up from that list. How many calls run at once is bounded
 // by the ask, not here.
-func Run(ctx context.Context, ask claudecli.Ask, opts Options) []Result {
+func Run(ctx context.Context, ask service.Ask, opts Options) []Result {
 	results := make([]Result, len(opts.Files)*len(opts.Rules))
 	leaves := newLeafCache()
 	landed := make(chan int, len(results))
@@ -211,7 +211,7 @@ func targetFor(opts Options, judged rule.Rule, file string) lint.Options {
 
 // judge times one target from the caller's point of view, so a rule that waited on
 // another rule's enumeration of the same file reports the wait it actually took.
-func judge(ctx context.Context, ask claudecli.Ask, leaves *leafCache, target lint.Options) Result {
+func judge(ctx context.Context, ask service.Ask, leaves *leafCache, target lint.Options) Result {
 	started := time.Now()
 	report, err := reportFor(ctx, ask, leaves, target)
 	if err != nil {
@@ -220,7 +220,7 @@ func judge(ctx context.Context, ask claudecli.Ask, leaves *leafCache, target lin
 	return Result{Report: report, Duration: time.Since(started), Err: err}
 }
 
-func reportFor(ctx context.Context, ask claudecli.Ask, leaves *leafCache, target lint.Options) (lint.Report, error) {
+func reportFor(ctx context.Context, ask service.Ask, leaves *leafCache, target lint.Options) (lint.Report, error) {
 	units, err := unitsFor(ctx, ask, leaves, target)
 	if err != nil {
 		return lint.Report{Rule: target.Rule.Name, File: target.File, Votes: target.Votes}, err
@@ -231,7 +231,7 @@ func reportFor(ctx context.Context, ask claudecli.Ask, leaves *leafCache, target
 // unitsFor consults the cache only for a rule whose units the model has to list.
 // A file-granularity rule judges the path, so asking would spend a call on an
 // answer already in hand.
-func unitsFor(ctx context.Context, ask claudecli.Ask, leaves *leafCache, target lint.Options) ([]lint.Unit, error) {
+func unitsFor(ctx context.Context, ask service.Ask, leaves *leafCache, target lint.Options) ([]lint.Unit, error) {
 	if !lint.NeedsEnumeration(target.Rule.Granularity) {
 		return lint.UnitsAt(target.Rule.Granularity, target.File, nil), nil
 	}
@@ -273,7 +273,7 @@ func newLeafCache() *leafCache {
 	return &leafCache{entries: map[string]*leafEntry{}}
 }
 
-func (c *leafCache) leavesOf(ctx context.Context, ask claudecli.Ask, target lint.Options) ([]string, error) {
+func (c *leafCache) leavesOf(ctx context.Context, ask service.Ask, target lint.Options) ([]string, error) {
 	entry := c.entryFor(target.File)
 	entry.once.Do(func() {
 		entry.leaves, entry.err = lint.Enumerate(ctx, ask, target)

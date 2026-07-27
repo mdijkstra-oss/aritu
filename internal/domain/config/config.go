@@ -24,12 +24,24 @@ type Config struct {
 	Model   *string   `yaml:"model"`
 	Effort  *string   `yaml:"effort"`
 	Output  *string   `yaml:"output"`
-	Claude  *string   `yaml:"claude"`
 	Votes   *int      `yaml:"votes"`
 	Jobs    *int      `yaml:"jobs"`
 	Timeout *Duration `yaml:"timeout"`
+	Service Service   `yaml:"service"`
 	Rules   Rules     `yaml:"rules"`
 	Include []string  `yaml:"include"`
+}
+
+// Service is where model calls go. It is a block rather than a scalar because an
+// endpoint and the credential it wants are one answer, and neither is a flag: a
+// repository points at one endpoint, and a URL typed at a shell is not how a
+// commit hook finds it.
+type Service struct {
+	Endpoint *string `yaml:"endpoint"`
+	// AuthTokenVar is the NAME of an environment variable, never a token. The
+	// field is named for what it holds so that a config file read at a glance
+	// cannot be misread as a place secrets go.
+	AuthTokenVar *string `yaml:"auth_token_var"`
 }
 
 // Rules is a block because the word names two things: where rules live, and which
@@ -148,7 +160,6 @@ var lookups = map[string]func(Config) any{
 	"model":   func(c Config) any { return valueOf(c.Model) },
 	"effort":  func(c Config) any { return valueOf(c.Effort) },
 	"output":  func(c Config) any { return valueOf(c.Output) },
-	"claude":  func(c Config) any { return valueOf(c.Claude) },
 	"votes":   func(c Config) any { return valueOf(c.Votes) },
 	"jobs":    func(c Config) any { return valueOf(c.Jobs) },
 	"timeout": func(c Config) any { return valueOf(nanosecondsOf(c.Timeout)) },

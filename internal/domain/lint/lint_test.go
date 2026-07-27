@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/matthijn/aritu/internal/domain/rule"
-	"github.com/matthijn/aritu/internal/lib/claudecli"
+	"github.com/matthijn/aritu/internal/lib/service"
 )
 
 const (
@@ -83,7 +83,7 @@ func keyOf(name string) string {
 }
 
 func TestApply(t *testing.T) {
-	unreachable := errors.New("claude: connection refused")
+	unreachable := errors.New("service: connection refused")
 	testOnly := rule.Rule{Name: "named-for-behavior", Prompt: rulePrompt, Granularity: rule.GranularityFunction}
 	withSource := rule.Rule{Name: "no-mocking", Prompt: rulePrompt, IncludeSource: true, Granularity: rule.GranularityFunction}
 
@@ -517,7 +517,7 @@ type tableAsker struct {
 	verdictPrompts []string
 }
 
-func (a *tableAsker) ask(_ context.Context, req claudecli.Request) (json.RawMessage, error) {
+func (a *tableAsker) ask(_ context.Context, req service.Request) (json.RawMessage, error) {
 	if string(req.Schema) == NamesSchema {
 		return json.RawMessage(a.names.body), a.names.err
 	}
@@ -687,10 +687,9 @@ func TestVerdictSchemaForEscapesAKeyRatherThanBreakingTheJSON(t *testing.T) {
 }
 
 // TestVerdictSchemaCarriesAdditionalPropertiesOnlyOnObjects guards a defect that
-// costs a whole call and reports as an unreliable model rather than as a bad
-// schema: the CLI validates in strict mode, and additionalProperties beside a
-// string or a boolean fails that validation, so every retry fails the same way
-// and the target comes back as could-not-run.
+// costs a whole call and reports as the endpoint's complaint rather than as a bad
+// schema: the format is sent strict, and additionalProperties beside a string or a
+// boolean is rejected outright, so the target comes back as could-not-run.
 func TestVerdictSchemaCarriesAdditionalPropertiesOnlyOnObjects(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -743,8 +742,7 @@ func typedNodesIn(node any, path string) map[string]map[string]any {
 }
 
 // TestUnitsAtFileGranularityAnswerUnderAKeyThatSurvivesBeingAToolParameter
-// covers the shape that made a whole call unanswerable. The CLI turns each
-// top-level schema property into a tool parameter; a path cut to the ceiling is
+// covers the shape that made a whole call unanswerable. A path cut to the ceiling is
 // neither unique across files under one long directory nor legible, and a cut
 // landing on a separator fails that derivation outright.
 func TestUnitsAtFileGranularityAnswerUnderAKeyThatSurvivesBeingAToolParameter(t *testing.T) {
@@ -803,10 +801,9 @@ func TestKeysStayUniqueWhereTruncationWouldNot(t *testing.T) {
 	}
 }
 
-// TestKeysNeverEndOnASeparator guards the shape that made a whole call
-// unanswerable: the CLI turns each top-level schema property into a tool
-// parameter, and a name at the length ceiling ending in a separator fails that
-// derivation, leaving a placeholder parameter the model cannot satisfy.
+// TestKeysNeverEndOnASeparator pins the key shape a verdict is answered under.
+// A name at the length ceiling that ends on a separator once made a whole call
+// unanswerable, and the key is still what every report is keyed by.
 func TestKeysNeverEndOnASeparator(t *testing.T) {
 	tests := []struct {
 		name  string

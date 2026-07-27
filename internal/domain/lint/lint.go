@@ -12,7 +12,7 @@ import (
 	"unicode"
 
 	"github.com/matthijn/aritu/internal/domain/rule"
-	"github.com/matthijn/aritu/internal/lib/claudecli"
+	"github.com/matthijn/aritu/internal/lib/service"
 	"github.com/matthijn/aritu/internal/lib/vote"
 	"github.com/matthijn/aritu/prompts"
 )
@@ -64,15 +64,16 @@ const (
 	ExitError Exit = 2
 )
 
-// NamesSchema constrains the test-name call. Keys are fixed because dynamic-key
-// schemas exhaust the CLI's structured-output retries.
+// NamesSchema constrains the test-name call. Its keys are fixed rather than
+// generated because the answer's shape never varies: one array, however many tests
+// the file holds.
 const NamesSchema = `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"],"additionalProperties":false}`
 
 // Apply votes on one file against one rule. Everything the rule reads is read
 // before anything is asked, so a target the rule cannot see costs no model call.
 // The returned Report carries Rule, File and Votes even when the error is
 // non-nil, so the caller can always emit output before exiting.
-func Apply(ctx context.Context, ask claudecli.Ask, opts Options) (Report, error) {
+func Apply(ctx context.Context, ask service.Ask, opts Options) (Report, error) {
 	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
 	if opts.Votes < 1 {
 		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
@@ -92,7 +93,7 @@ func Apply(ctx context.Context, ask claudecli.Ask, opts Options) (Report, error)
 // independent of the rule: the enumeration prompt is built from the granularity and
 // the file alone, so every rule over one file would otherwise ask the same question
 // and pay for the same answer. Coarser levels roll up from this with UnitsAt.
-func Enumerate(ctx context.Context, ask claudecli.Ask, opts Options) ([]string, error) {
+func Enumerate(ctx context.Context, ask service.Ask, opts Options) ([]string, error) {
 	test, err := readSourceFile(opts.File)
 	if err != nil {
 		return nil, err
@@ -130,7 +131,7 @@ func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit 
 // Judge votes on units already enumerated. The returned Report carries Rule, File
 // and Votes even when the error is non-nil, so the caller can always emit output
 // before exiting.
-func Judge(ctx context.Context, ask claudecli.Ask, opts Options, units []Unit) (Report, error) {
+func Judge(ctx context.Context, ask service.Ask, opts Options, units []Unit) (Report, error) {
 	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
 	if opts.Votes < 1 {
 		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
@@ -142,14 +143,14 @@ func Judge(ctx context.Context, ask claudecli.Ask, opts Options, units []Unit) (
 	return voteOn(ctx, ask, opts, files, units)
 }
 
-func leavesFor(ctx context.Context, ask claudecli.Ask, opts Options) ([]string, error) {
+func leavesFor(ctx context.Context, ask service.Ask, opts Options) ([]string, error) {
 	if !NeedsEnumeration(opts.Rule.Granularity) {
 		return nil, nil
 	}
 	return Enumerate(ctx, ask, opts)
 }
 
-func voteOn(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []Unit) (Report, error) {
+func voteOn(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (Report, error) {
 	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
 
 	judge := func(ctx context.Context, _ int) (round, error) {
@@ -258,8 +259,8 @@ func readSourceFile(path string) (SourceFile, error) {
 	return SourceFile{Path: path, Content: string(content)}, nil
 }
 
-func askNames(ctx context.Context, ask claudecli.Ask, opts Options, test SourceFile) ([]string, error) {
-	raw, err := ask(ctx, claudecli.Request{
+func askNames(ctx context.Context, ask service.Ask, opts Options, test SourceFile) ([]string, error) {
+	raw, err := ask(ctx, service.Request{
 		Prompt: BuildNamesPrompt(opts.Rule.Granularity, test),
 		Model:  opts.Model,
 		Effort: opts.Effort,
@@ -279,8 +280,8 @@ func askNames(ctx context.Context, ask claudecli.Ask, opts Options, test SourceF
 	return reply.Names, nil
 }
 
-func askVerdicts(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
-	raw, err := ask(ctx, claudecli.Request{
+func askVerdicts(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
+	raw, err := ask(ctx, service.Request{
 		Prompt: BuildVerdictPrompt(opts.Rule.Prompt, files, units),
 		Model:  opts.Model,
 		Effort: opts.Effort,
@@ -355,8 +356,8 @@ func findDuplicate(names []string) (string, bool) {
 }
 
 // checkKeysMatch should never fire: the generated schema names every key and
-// forbids any other, so the CLI rejects a non-conforming reply before it reaches
-// here. It stays as an assertion against a contract this package does not own, and
+// forbids any other, so the endpoint's strict json_schema rejects a non-conforming
+// reply before it reaches here. It stays as an assertion against a contract this package does not own, and
 // keeps exit 2, because a schema that failed to hold is a could-not-run.
 func checkKeysMatch(units []Unit, answers map[string]verdictAnswer, file string) error {
 	expected := make(map[string]bool, len(units))
@@ -404,7 +405,7 @@ func UnitsFor(names []string) []Unit {
 // VerdictSchemaFor names every key the reply may carry. An object cannot repeat a
 // key, cannot omit a required one and cannot carry an extra one, so duplicated,
 // dropped and invented units stop being errors this package has to detect and
-// become schema violations the CLI retries on its own.
+// become schema violations the endpoint refuses to produce.
 func VerdictSchemaFor(units []Unit) json.RawMessage {
 	answers := make(map[string]schemaNode, len(units))
 	keys := make([]string, 0, len(units))
@@ -421,9 +422,9 @@ func VerdictSchemaFor(units []Unit) json.RawMessage {
 
 // schemaNode is one node of a generated JSON Schema. AdditionalProperties is a
 // pointer because the keyword only means anything on an object: emitted beside a
-// string or a boolean it fails the CLI's strict validation, and the whole call
-// then comes back as retries exhausted rather than as a rejected schema — a
-// could-not-run that looks like an unreliable model.
+// string or a boolean the endpoint rejects the request outright, and a rejected
+// request is not retried — every call carrying the schema fails the same way, for
+// a reason that reads as the endpoint's rather than as ours.
 type schemaNode struct {
 	Type                 string                `json:"type"`
 	Properties           map[string]schemaNode `json:"properties,omitempty"`
@@ -432,8 +433,8 @@ type schemaNode struct {
 }
 
 // closedObject is an object that may carry no key beyond the ones named, which is
-// what turns a duplicated, dropped or invented unit into a schema violation the
-// CLI retries rather than an error this package has to detect.
+// what turns a duplicated, dropped or invented unit into a reply the endpoint's
+// strict enforcement will not produce, rather than an error this package detects.
 func closedObject(properties map[string]schemaNode, required []string) schemaNode {
 	isClosed := false
 	return schemaNode{
@@ -542,14 +543,15 @@ func trimSeparators(key string) string {
 // be the identifier a reader sees.
 const maxKeyLength = 64
 
-// keySeparators may sit inside a key but never at its end. The CLI derives one
-// tool parameter per top-level schema property, and a name at the ceiling that
-// ends on one fails that derivation: the parameter becomes an unsubstituted
-// placeholder, and no reply can satisfy it however correct the answer.
+// keySeparators may sit inside a key but never at its end. Each carries one level
+// of the name: "." between the parts, "_" between the words of one part. A colon
+// would read better in front of the digest, but the character set above does not
+// permit one.
 //
-// Each separator carries one level of the name: "." between the parts, "_" between
-// the words of one part. A colon would read better in front of the digest, but the
-// character set above does not permit one.
+// The trailing-separator rule outlived the transport that forced it, where a key
+// ending on one broke the CLI's derivation of tool parameters. It is kept because
+// the key is what a verdict is answered under and what a report is keyed by, and
+// the unit model is not this feature's to change.
 const keySeparators = "_-."
 
 // splitUnit separates the test from the case a leaf name carries. It takes the
