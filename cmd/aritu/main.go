@@ -43,6 +43,7 @@ type CLI struct {
 	Timeout  time.Duration `help:"Deadline for the whole run, so a hung endpoint cannot hang a commit hook." default:"${timeout}"`
 	Apply    ApplyCmd      `cmd:"" help:"Judge files against rules."`
 	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
+	Rulebook RulebookCmd   `cmd:"" help:"Write the enabled rules as a document to follow before writing."`
 
 	// Loaded is aritu.yml as read during the parse. Its target patterns and its
 	// enabled rules answer no flag, so no resolver can carry them out of the parse.
@@ -59,12 +60,22 @@ type ApplyCmd struct {
 // SelftestCmd runs every named rule against its own fixtures.
 type SelftestCmd struct{}
 
+// RulebookCmd writes the enabled rules as one document, in the form they are
+// useful in before a file exists rather than after. It is the same rule set apply
+// judges against, which is the point: what a contributor is told to do and what
+// they are later measured against come from one place and cannot drift apart.
+type RulebookCmd struct{}
+
 const description = `An LLM linter for tests.
 
 Point it at files and every rule that is about them judges them, reported once,
 grouped by file. Name no file and the sweep is everything the enabled rules
 target. No flag names a language: a model reads the file, and the rules describe
-properties rather than syntax.`
+properties rather than syntax.
+
+The same rules come back out as prose: rulebook writes what each one asks of
+whoever is about to write the file, so the standard is handed over beforehand
+rather than only enforced afterwards.`
 
 const exitCodes = `Exit codes:
 
@@ -129,15 +140,10 @@ func execute(args []string, stdout, stderr io.Writer) lint.Exit {
 		fmt.Fprintf(stderr, "aritu: %v\n", err)
 		return lint.ExitError
 	}
-	ask, err := askFor(&cli)
-	if err != nil {
-		fmt.Fprintf(stderr, "aritu: %v\n", err)
-		return lint.ExitError
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cli.Timeout)
 	defer cancel()
-	return commandFor(kctx.Selected().Name)(ctx, &cli, ask, stdout, stderr)
+	return commandFor(kctx.Selected().Name)(ctx, &cli, stdout, stderr)
 }
 
 // newParser builds the grammar. Exit is replaced because kong's help flag ends
@@ -189,13 +195,36 @@ func isKnownEffort(effort string) bool {
 	return effort == "" || slices.Contains(efforts, effort)
 }
 
-// command is one subcommand's body. Both take the writers rather than reaching
+// command is one subcommand's body. Each takes the writers rather than reaching
 // for the process streams, so a whole command can be exercised against buffers.
-type command func(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit
+type command func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit
+
+// judged is the body of a command that calls a model, which is a command needing
+// one thing more than the others: somewhere to send the call.
+type judged func(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit
+
+// judging resolves the endpoint and its credential before the body runs, so a
+// missing endpoint or a misnamed variable costs one line at startup rather than a
+// wall of 401s minutes into a sweep.
+//
+// Only the commands that call a model are wrapped. Whether an endpoint is needed
+// is a property of the command rather than a question asked at the seam, so it is
+// answered once, in the table below, where each command is named.
+func judging(body judged) command {
+	return func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+		ask, err := askFor(cli)
+		if err != nil {
+			fmt.Fprintf(stderr, "aritu: %v\n", err)
+			return lint.ExitError
+		}
+		return body(ctx, cli, ask, stdout, stderr)
+	}
+}
 
 var commands = map[string]command{
-	"apply":    runApply,
-	"selftest": runSelftest,
+	"apply":    judging(runApply),
+	"selftest": judging(runSelftest),
+	"rulebook": runRulebook,
 }
 
 func commandFor(name string) command {
@@ -447,6 +476,35 @@ func selftestResults(ctx context.Context, ask service.Ask, cli *CLI, known []str
 // not be run is never reported as an ordinary miss.
 func worse(a, b lint.Exit) lint.Exit {
 	return max(a, b)
+}
+
+// runRulebook writes the enabled rules as one document. It calls no model: what
+// each rule asks of a writer is already written down, and having a model restate
+// it would make the same rule set produce a different document every run and cost
+// a repository an endpoint to read its own rules.
+//
+// The selection is the one apply uses, so a rule that is not enabled is not
+// preached either. There is no exit code between 0 and 2 here — a rulebook is
+// produced or it is not, and nothing in it can fall short of anything.
+func runRulebook(_ context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+	if err := writeRulebook(cli, stdout); err != nil {
+		fmt.Fprintf(stderr, "aritu rulebook: %v\n", err)
+		return lint.ExitError
+	}
+	return lint.ExitPass
+}
+
+func writeRulebook(cli *CLI, w io.Writer) error {
+	known, err := knownTargetsFor(cli)
+	if err != nil {
+		return err
+	}
+	rules, err := rulesFor(cli, known)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprint(w, rule.Rulebook(rules))
+	return err
 }
 
 // rulesFor loads the rules to run. Naming none runs every rule the directory

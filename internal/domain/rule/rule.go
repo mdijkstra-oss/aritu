@@ -16,10 +16,15 @@ import (
 )
 
 // Rule is one linting rule loaded from a directory under the rules dir.
+//
+// Prompt and Description are both prose about the same property, written for
+// opposite moments: Prompt settles a verdict after the file exists, Description
+// tells whoever is about to write one what complying with it takes.
 type Rule struct {
 	Name          string
 	Dir           string
 	Prompt        string
+	Description   string
 	Targets       []string
 	Include       []string
 	IncludeSource bool
@@ -47,6 +52,7 @@ type Prompt struct {
 	Granularity   Granularity
 	Targets       []string
 	Include       []string
+	Description   string
 	Body          string
 }
 
@@ -84,6 +90,7 @@ func Load(rulesDir, name string, knownTargets []string) (Rule, error) {
 		Name:          name,
 		Dir:           dir,
 		Prompt:        prompt.Body,
+		Description:   prompt.Description,
 		Targets:       prompt.Targets,
 		Include:       prompt.Include,
 		IncludeSource: prompt.IncludeSource,
@@ -91,7 +98,14 @@ func Load(rulesDir, name string, knownTargets []string) (Rule, error) {
 	}, nil
 }
 
-// List names every rule in the directory, sorted. Only directories count.
+// List names every rule in the directory, sorted. Only directories count, and a
+// name starting with _ is parked: it stays on disk, keeps its fixtures and still
+// loads when somebody names it, but no sweep picks it up on its own.
+//
+// Parking is what a repository does with a rule it is not ready to enforce, and it
+// beats the alternatives — deleting the rule loses the prompt that took the work,
+// and listing the others in aritu.yml means editing that list every time a rule is
+// added.
 func List(rulesDir string) ([]string, error) {
 	entries, err := os.ReadDir(rulesDir)
 	if err != nil {
@@ -99,7 +113,7 @@ func List(rulesDir string) ([]string, error) {
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() && !IsParked(entry.Name()) {
 			names = append(names, entry.Name())
 		}
 	}
@@ -108,6 +122,13 @@ func List(rulesDir string) ([]string, error) {
 	}
 	slices.Sort(names)
 	return names, nil
+}
+
+// IsParked answers whether a rule name is one a sweep leaves alone. Naming it
+// explicitly still runs it, the way a pattern naming a file inside the rules
+// directory still judges it: what was asked for outranks what was derived.
+func IsParked(name string) bool {
+	return strings.HasPrefix(name, parkedPrefix)
 }
 
 // LoadFixtures lists the rule's fixture directories, sorted by name.
@@ -139,6 +160,11 @@ func LoadFixtures(r Rule) ([]Fixture, error) {
 // include_source, granularity or targets key is an error: defaulting any of them
 // silently would change which files reach the model, or what it is asked about
 // them, without anyone noticing.
+//
+// description is required for the same reason at the other end of the tool. It is
+// the whole of what a rule contributes to the rulebook, so a rule without one takes
+// a heading and says nothing under it — an instruction that reads as satisfied
+// because there is nothing there to fail.
 func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	lines := strings.Split(raw, "\n")
 	if len(lines) == 0 || !isFrontmatterDelimiter(lines[0]) {
@@ -159,6 +185,9 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	if front.Granularity == nil {
 		return Prompt{}, errors.New("prompt.md: frontmatter must set granularity")
 	}
+	if isBlank(front.Description) {
+		return Prompt{}, errors.New("prompt.md: frontmatter must set description, the paragraph the rulebook hands whoever is about to write the file")
+	}
 	granularity, err := ParseGranularity(*front.Granularity)
 	if err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
@@ -174,6 +203,7 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 		Granularity:   granularity,
 		Targets:       front.Targets,
 		Include:       front.Include,
+		Description:   strings.TrimSpace(*front.Description),
 		Body:          joinAfterLeadingBlanks(lines[closing+1:]),
 	}, nil
 }
@@ -279,6 +309,7 @@ func (g Granularity) String() string {
 const (
 	promptFileName  = "prompt.md"
 	fixturesDirName = "fixtures"
+	parkedPrefix    = "_"
 )
 
 var expectationPrefixes = map[string]Expectation{
@@ -331,6 +362,13 @@ type frontmatter struct {
 	Granularity   *string  `yaml:"granularity"`
 	Targets       []string `yaml:"targets"`
 	Include       []string `yaml:"include"`
+	Description   *string  `yaml:"description"`
+}
+
+// isBlank treats a key nobody wrote and a key holding only whitespace as the same
+// thing, because a heading with whitespace under it instructs nobody either.
+func isBlank(value *string) bool {
+	return value == nil || strings.TrimSpace(*value) == ""
 }
 
 func isFrontmatterDelimiter(line string) bool {

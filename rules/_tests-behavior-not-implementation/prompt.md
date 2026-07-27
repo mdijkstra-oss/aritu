@@ -3,6 +3,17 @@ targets: [tests]
 include: [tests]
 include_source: true
 granularity: function
+description: >-
+  Drive the subject through the seam a caller would use, and assert what it
+  produced rather than how it produced it. Before you write an assertion, ask
+  whether the subject could be rewritten so that every caller still gets exactly
+  what it got before and this assertion would still fail — if it would, you are
+  pinning down a strategy, a stored field or an internal step, and the assertion
+  belongs instead on the returned value, the error raised, or the state a caller
+  can observe afterwards. Replace collaborators the test has no business running —
+  a clock, a random source, an outbound transport, a store — but never replace the
+  subject itself, and do not settle for asserting that a replacement was called
+  when a value it produced was there to assert on.
 ---
 A test must bind to the seam a caller would use, and assert what the code produced rather
 than how it produced it. Such a test survives a rewrite of the thing it tests: change the

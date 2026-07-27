@@ -75,7 +75,7 @@ func TestExecute(t *testing.T) {
 		{
 			name:       "no command names the commands there are",
 			want:       lint.ExitError,
-			wantStderr: []string{"apply", "selftest", "Usage:"},
+			wantStderr: []string{"apply", "selftest", "rulebook", "Usage:"},
 		},
 		{
 			name:       "a command that does not exist is refused",
@@ -91,10 +91,10 @@ func TestExecute(t *testing.T) {
 			notWant:    "aritu apply:",
 		},
 		{
-			name:       "the root help carries both commands and every flag",
+			name:       "the root help carries every command and every flag",
 			args:       []string{"--help"},
 			want:       lint.ExitPass,
-			wantStdout: []string{"apply", "selftest", "--model", "--effort", "--jobs", "--timeout", "--config"},
+			wantStdout: []string{"apply", "selftest", "rulebook", "--model", "--effort", "--jobs", "--timeout", "--config"},
 		},
 		{
 			name:       "apply with a vote count that is not a number",
@@ -324,6 +324,33 @@ func TestExecute(t *testing.T) {
 		{
 			name:       "selftest over a rules directory holding no rules",
 			args:       []string{"selftest", "--rules", emptyRules},
+			want:       lint.ExitError,
+			wantStderr: []string{"holds no rules"},
+		},
+		{
+			name:       "rulebook writes the rules with no endpoint for it to have called",
+			dir:        noServiceRepo,
+			args:       []string{"rulebook"},
+			want:       lint.ExitPass,
+			wantStdout: []string{"# Coding rules", "## solo", "what complying with solo takes"},
+		},
+		{
+			name:       "rulebook carries what each rule asks for and not the criterion it judges by",
+			args:       []string{"rulebook", "--rules", twoRules},
+			want:       lint.ExitPass,
+			wantStdout: []string{"## first", "## second"},
+			notWantOut: "A test must pin down one behaviour.",
+		},
+		{
+			name:       "rulebook preaches the rules that are enabled and no others",
+			args:       []string{"rulebook", "--rules", twoRules, "--rule", "second"},
+			want:       lint.ExitPass,
+			wantStdout: []string{"## second"},
+			notWantOut: "## first",
+		},
+		{
+			name:       "rulebook over a rules directory holding no rules",
+			args:       []string{"rulebook", "--rules", emptyRules},
 			want:       lint.ExitError,
 			wantStderr: []string{"holds no rules"},
 		},
@@ -868,10 +895,12 @@ func writeRulesIn(t *testing.T, root string, names ...string) string {
 
 // writeRuleAbout adds one rule about the named kind of file, which is the axis
 // these tests exercise: the kind is what decides which files the rule is handed.
+// The description names the rule, so a rulebook built from several of these can be
+// checked for having reached each one rather than merely for having a heading.
 func writeRuleAbout(t *testing.T, root, name, target string) string {
 	t.Helper()
 	writeFile(t, filepath.Join(root, name, "prompt.md"),
-		fmt.Sprintf("---\ntargets: [%s]\ninclude_source: false\ngranularity: function\n---\nA test must pin down one behaviour.\n", target))
+		fmt.Sprintf("---\ntargets: [%s]\ninclude_source: false\ngranularity: function\ndescription: what complying with %s takes\n---\nA test must pin down one behaviour.\n", target, name))
 	fixture := filepath.Join(root, name, "fixtures", "pass-only")
 	writeFile(t, filepath.Join(fixture, "scenario.go"), "package scenario\n")
 	writeFile(t, filepath.Join(fixture, "scenario_test.go"), testFileBody)
@@ -1013,9 +1042,10 @@ var bannedFragments = []string{
 	"assertEquals", "parametrize", "@ParameterizedTest", "self.assert",
 }
 
-// shippedRulesDir is the rule set this repository ships, read from disk rather
-// than rebuilt in a temp directory: a prompt that quietly acquires a language is
-// invisible to a test over synthetic input.
+// shippedRulesDir holds both rule sets: the grouped rules aritu ships, parked
+// under a leading _, and the rules this repository enforces on itself. It is read
+// from disk rather than rebuilt in a temp directory, because a prompt that quietly
+// acquires a language is invisible to a test over synthetic input.
 var shippedRulesDir = filepath.Join("..", "..", "rules")
 
 // TestNothingArituSaysNamesALanguage covers every surface where a language could
@@ -1023,10 +1053,12 @@ var shippedRulesDir = filepath.Join("..", "..", "rules")
 // and the help a person reads. Each is checked in the same place because the list
 // of what may not appear is one list.
 func TestNothingArituSaysNamesALanguage(t *testing.T) {
-	tests := []struct {
+	type surface struct {
 		name string
 		text func(t *testing.T) string
-	}{
+	}
+
+	tests := []surface{
 		{
 			name: "the verdict prompt",
 			text: func(*testing.T) string { return prompts.Verdict([]string{"tests"}, "", "", "") },
@@ -1039,15 +1071,22 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 			name: "the help a person reads",
 			text: func(t *testing.T) string { return helpOutput(t) },
 		},
+		{
+			name: "the rulebook preamble",
+			text: func(*testing.T) string { return rule.Rulebook(nil) },
+		},
 	}
 	for _, name := range shippedRuleNames(t) {
-		tests = append(tests, struct {
-			name string
-			text func(t *testing.T) string
-		}{
-			name: "the rule " + name,
-			text: func(t *testing.T) string { return loadRulePrompt(t, name) },
-		})
+		tests = append(tests,
+			surface{
+				name: "the rule " + name,
+				text: func(t *testing.T) string { return loadRule(t, name).Prompt },
+			},
+			surface{
+				name: "the description of " + name,
+				text: func(t *testing.T) string { return loadRule(t, name).Description },
+			},
+		)
 	}
 
 	for _, tc := range tests {
@@ -1068,22 +1107,35 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 	}
 }
 
+// shippedRuleNames is the parked set and not what List offers, because those two
+// have come apart: what aritu ships is the grouped rules, and what a sweep here
+// picks up is this repository's own rule set, which is free to name an ecosystem
+// as often as it likes.
 func shippedRuleNames(t *testing.T) []string {
 	t.Helper()
-	names, err := rule.List(shippedRulesDir)
+	entries, err := os.ReadDir(shippedRulesDir)
 	if err != nil {
-		t.Fatalf("List() error = %v", err)
+		t.Fatalf("reading %s: %v", shippedRulesDir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && rule.IsParked(entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	if len(names) == 0 {
+		t.Fatalf("no parked rules in %s, so this test checked nothing", shippedRulesDir)
 	}
 	return names
 }
 
-func loadRulePrompt(t *testing.T, name string) string {
+func loadRule(t *testing.T, name string) rule.Rule {
 	t.Helper()
 	loaded, err := rule.Load(shippedRulesDir, name, []string{"code", "docs", "tests"})
 	if err != nil {
 		t.Fatalf("Load(%q) error = %v", name, err)
 	}
-	return loaded.Prompt
+	return loaded
 }
 
 // namesPrompt drops the file block, so the prompt is judged on the instructions

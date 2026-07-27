@@ -1,6 +1,7 @@
 package rule_test
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,6 +21,10 @@ var shippedRulesDir = filepath.Join("..", "..", "..", "rules")
 // load-bearing: two properties that disagree about any of them cannot share a
 // verdict call, so a flipped value silently changes which files reach the model,
 // what it is asked, and what it can see.
+//
+// Every name is parked. The seven are aritu's own material rather than the rule
+// set this repository enforces on itself, so they sit out of every sweep and are
+// reached by being named.
 var shippedRules = []struct {
 	name          string
 	targets       []string
@@ -27,13 +32,13 @@ var shippedRules = []struct {
 	includeSource bool
 	include       []string
 }{
-	{name: "no-gaps", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
-	{name: "no-redundancy", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
-	{name: "proves-what-it-claims", targets: []string{"tests"}, granularity: rule.GranularityTestCase, includeSource: true, include: []string{"tests"}},
-	{name: "readable", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
-	{name: "self-contained", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: false, include: []string{"tests"}},
-	{name: "tests-behavior-not-implementation", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: true, include: []string{"tests"}},
-	{name: "tests-one-thing", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
+	{name: "_no-gaps", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
+	{name: "_no-redundancy", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
+	{name: "_proves-what-it-claims", targets: []string{"tests"}, granularity: rule.GranularityTestCase, includeSource: true, include: []string{"tests"}},
+	{name: "_readable", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
+	{name: "_self-contained", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: false, include: []string{"tests"}},
+	{name: "_tests-behavior-not-implementation", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: true, include: []string{"tests"}},
+	{name: "_tests-one-thing", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
 }
 
 // knownTargets is what a repository running the shipped set would have resolved
@@ -52,18 +57,34 @@ var fixtureLanguages = map[string]string{
 }
 
 func TestTheShippedRuleSetIsTheSevenGroupedRules(t *testing.T) {
-	names, err := rule.List(shippedRulesDir)
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
-	}
-
 	want := make([]string, 0, len(shippedRules))
 	for _, shipped := range shippedRules {
 		want = append(want, shipped.name)
 	}
-	if !slices.Equal(names, want) {
-		t.Errorf("rules directory holds %v, want exactly %v", names, want)
+
+	got := parkedRuleNames(t)
+
+	if !slices.Equal(got, want) {
+		t.Errorf("the parked rules are %v, want exactly %v", got, want)
 	}
+}
+
+// parkedRuleNames reads the directories List deliberately leaves out, which is the
+// only way to see the shipped set now that all seven of them are parked.
+func parkedRuleNames(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(shippedRulesDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", shippedRulesDir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && rule.IsParked(entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 func TestEveryShippedRuleDeclaresTheLevelAndEvidenceItsPropertyNeeds(t *testing.T) {
@@ -88,6 +109,9 @@ func TestEveryShippedRuleDeclaresTheLevelAndEvidenceItsPropertyNeeds(t *testing.
 			}
 			if strings.TrimSpace(loaded.Prompt) == "" {
 				t.Error("prompt body is empty, so the rule states no criterion")
+			}
+			if strings.TrimSpace(loaded.Description) == "" {
+				t.Error("description is empty, so the rule takes a heading in the rulebook and asks for nothing under it")
 			}
 		})
 	}

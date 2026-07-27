@@ -7,6 +7,19 @@ model whether each unit of that file satisfies the rule, several times over, and
 reports how many runs agreed. Run it in CI or from a pre-commit hook to stop tests
 that assert nothing, prove nothing, or mock away the thing they claim to cover.
 
+**A rule you put in a prompt is a request.** Nothing reads the code back
+afterwards, nothing disagrees, and nothing fails: whether the rule was followed
+comes down to whether the model was inclined to follow it, and the only account of
+that is a diff summarised by the same model that wrote it. aritu is that same
+standard made checkable — a verdict per unit with a reason, several runs that have
+to agree before anything passes, and a non-zero exit code out of a hook. Being told
+becomes being held to it.
+
+The same rules also come back out as prose. `aritu rulebook` writes what each one
+asks of whoever is about to write the test, which is what you hand an agent as its
+`AGENTS.md` — so the standard it is given and the standard it is judged by are one
+file and cannot drift apart.
+
 It does no code parsing. There is no AST, no matcher DSL, no suppression comments —
 just files, a prompt, and a vote. That is also why it is not tied to a language: a
 model reads the file and reports what it sees, and nothing in a rule names an
@@ -45,6 +58,9 @@ aritu apply 'src/**/*.test.ts' 'tests/test_*.py'
 
 # check the rules themselves against their own fixtures
 aritu selftest --votes 4
+
+# write the same rules out as instructions, before anything is judged
+aritu rulebook > AGENTS.md
 ```
 
 Patterns are globs, including `**` across directories. aritu expands them itself,
@@ -143,6 +159,52 @@ exactly the test aritu exists to catch.
 Output is always written before exiting, including on `2`. The counts are the whole
 diagnostic; suppressing them on failure removes the reason to have them.
 
+## The rulebook
+
+`apply` tells you what is wrong after the file exists. `rulebook` writes the same
+rules out beforehand, as the thing to follow rather than the thing to be measured
+against:
+
+```sh
+aritu rulebook > AGENTS.md
+```
+
+```markdown
+# Coding rules
+
+The following rules must be abided by. Read them before writing anything they are
+about, and check what you wrote against them before calling it done.
+
+## tests-one-thing
+
+Give every test one reason to fail. Decide which single behaviour it pins down
+before you write the body, then let every assertion in it describe the result of
+one act — the value returned, the error raised, the fields of the value produced,
+the state changed. Assertion count costs you nothing; a second act costs you the
+rule. ...
+```
+
+One heading per rule, and that rule's `description` under it, in the order the
+rules were enabled. It is the selection `apply` uses, so a rule you have not
+enabled is not preached either, and `--rule` narrows the document the same way it
+narrows a sweep.
+
+**No model is called.** What each rule asks of a writer is already written down,
+so a repository can produce its rulebook offline and with no `service.endpoint`
+configured — and the same rule set always renders the same document, which is what
+makes it worth committing. Point it at a `CLAUDE.md`, an `AGENTS.md`, a contributing
+guide, or a prompt.
+
+What it deliberately leaves out is the criterion in `prompt.md`. That text is
+written to settle a verdict about a file that already exists: two poles,
+near-misses, and a long account of the ways a judge goes wrong. Handing it to
+somebody about to write the file hands them the argument instead of the
+instruction.
+
+The value is that both halves come from one file. What a contributor is told to do
+and what they are later judged against cannot drift apart, because editing the rule
+edits both.
+
 ## Configuration
 
 `aritu.yml` at the repository root. Every key is optional except `service.endpoint`,
@@ -229,6 +291,21 @@ rules/
         duration_test.go
 ```
 
+### Parking a rule
+
+A directory whose name starts with `_` is **parked**. It stays on disk, keeps its
+prompt and its fixtures, and still runs when you name it — `--rule _tests-one-thing`
+works exactly as it did — but no sweep picks it up on its own, and `rulebook` does
+not preach it.
+
+Parking is what to do with a rule you are not ready to enforce. Deleting it loses
+the prompt that took the work to write, and listing the rules you *do* want in
+`aritu.yml` means editing that list every time you add one.
+
+It follows the same principle as the rules directory being kept out of the derived
+sweep: what was **derived** leaves parked rules alone, and what was **asked for**
+overrules that.
+
 A rule's `prompt.md` is only its criterion. Everything every rule would otherwise
 repeat — what judging means, that tests come in many shapes across ecosystems and
 the behaviour is judged rather than the syntax, what a unit is, how to write a
@@ -256,9 +333,17 @@ targets: [tests]
 include: [tests]
 include_source: false
 granularity: test_case
+description: >-
+  Name each test for an outcome, then make its body capable of contradicting
+  that name...
 ---
 A test's verdict must hang on the behaviour it is named for...
 ```
+
+The body and `description` are the same property written for opposite moments. The
+body judges a file that already exists and is only ever read by a model; the
+description tells whoever is about to write one what complying takes, and is only
+ever read by a person or an agent, through [`rulebook`](#the-rulebook).
 
 `targets` names the kinds of file the rule is about, and is what makes a rule about
 something other than tests runnable: aritu ships `tests`, `code` and `docs`, and
@@ -266,12 +351,18 @@ something other than tests runnable: aritu ships `tests`, `code` and `docs`, and
 `tests` — a test file has comments like any other source file — because kinds are
 named matchers rather than a partition of the tree.
 
-`targets`, `include_source` and `granularity` are all required. Defaulting any of
-them silently changes which files reach the model, what it sees, or what it judges,
-and nothing would report it. A `targets` typo is the sharpest case: `[test]` for
-`[tests]` would match no file, run nothing, and exit `0`. So an unknown kind fails
-when the rule is loaded, naming the ones there are, before a single model call — and
-so does an empty list, which is a rule that could never run.
+`targets`, `include_source`, `granularity` and `description` are all required, and
+a missing one is an error naming the key. Defaulting the first three silently
+changes which files reach the model, what it sees, or what it judges, and nothing
+would report it. A `targets` typo is the sharpest case: `[test]` for `[tests]` would
+match no file, run nothing, and exit `0`. So an unknown kind fails when the rule is
+loaded, naming the ones there are, before a single model call — and so does an empty
+list, which is a rule that could never run.
+
+`description` is required for the same reason at the other end of the tool: it is
+the whole of what a rule contributes to the rulebook, so a rule without one takes a
+heading and says nothing under it — an instruction that reads as satisfied because
+there is nothing there to fail. A key holding only whitespace is refused too.
 
 `targets` and `include` stay separate keys even though every shipped rule sets both
 to `[tests]`. They answer different questions: a rule about comments targets `code`

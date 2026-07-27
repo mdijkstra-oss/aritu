@@ -3,6 +3,16 @@ targets: [tests]
 include: [tests]
 include_source: false
 granularity: function
+description: >-
+  Give every test one reason to fail. Decide which single behaviour it pins down
+  before you write the body, then let every assertion in it describe the result of
+  one act — the value returned, the error raised, the fields of the value produced,
+  the state changed. Assertion count costs you nothing; a second act costs you the
+  rule. When you find yourself acting again on the first act's result, or bundling
+  the valid case with the rejected one, or writing a table whose cases stop feeding
+  inputs to one question and start asking different ones, split it into another
+  test. Setup, fixture construction and a guard that the setup worked are not a
+  second behaviour and belong where they are.
 ---
 A test must have one reason to fail: it pins down a single behaviour, however many
 assertions it takes to do so. When such a test goes red, the failing unit and the failing
