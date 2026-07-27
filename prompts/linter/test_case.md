@@ -1,0 +1,5 @@
+Each unit is one test case: the smallest thing this file's test framework runs and reports under its own name, or one leaf of it — one row of a table of cases, one parametrised argument set, one subdivision declared inside the test body.
+
+A unit's name may join enclosing scopes with " > " and carry its case in trailing parentheses. Read the parts as one name: no part is judged alone, and no part has to carry the whole meaning by itself. In "ParseAddress (extracts host before colon)" the test name is a namespace and the case carries the claim; in "TrimsSurroundingWhitespaceFromEachTag (leading spaces)" the case only varies the input. Whatever the rule asks of a unit, ask it of the composite.
+
+Tests come in many shapes: a table of cases walked by one loop, parametrised cases generated from a list, grouping blocks nested inside each other, one class per fixture, plain linear arrange-act-assert. Judge the behaviour a unit pins down, never the syntax it is written in — no shape is by itself a pass or a fail, and a rule that fires on the spelling rather than the substance is being read wrongly.

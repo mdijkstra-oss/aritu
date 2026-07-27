@@ -1,0 +1,1 @@
+The single unit is the file itself: you are given its path, and you return one verdict covering everything in it. The reason is the only locating guidance a reader gets, so it has to do the work the unit name cannot.

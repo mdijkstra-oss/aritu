@@ -194,6 +194,18 @@ func TestExecute(t *testing.T) {
 			wantStderr: []string{"judging 1 file against 2 rules, 1 vote"},
 		},
 		{
+			name: "--debug prints the prompts and nothing else, without needing an endpoint at all",
+			dir:  noServiceRepo,
+			args: []string{"apply", "--debug", filepath.Join("internal", "pkg", "alpha_test.go")},
+			want: lint.ExitPass,
+			wantStderr: []string{
+				"--- splitter prompt ---", "--- linter prompt ---",
+				"<instructions>", "<rule>", "## Solo", "<file path=", "alpha_test.go",
+				"DebugUnitOne   ->   u01_debug_unit_one", "<task>",
+			},
+			notWant: "judging",
+		},
+		{
 			name:       "a unit falling short of its rule",
 			dir:        dissatisfiedRepo,
 			args:       []string{"apply", "--rules", soloRules, alpha},
@@ -1057,12 +1069,24 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 
 	tests := []surface{
 		{
-			name: "the verdict prompt",
-			text: func(*testing.T) string { return prompts.Verdict([]string{"tests"}, "", "", "") },
+			name: "the linter prompt at test granularity",
+			text: func(*testing.T) string { return prompts.Linter("test_case", "", nil, nil) },
 		},
 		{
-			name: "the enumeration prompt",
+			name: "the linter prompt at function granularity",
+			text: func(*testing.T) string { return prompts.Linter("function", "", nil, nil) },
+		},
+		{
+			name: "the linter prompt at file granularity",
+			text: func(*testing.T) string { return prompts.Linter("file", "", nil, nil) },
+		},
+		{
+			name: "the splitter prompt at test granularity",
 			text: func(*testing.T) string { return namesPrompt(rule.GranularityTestCase) },
+		},
+		{
+			name: "the splitter prompt at function granularity",
+			text: func(*testing.T) string { return namesPrompt(rule.GranularityFunction) },
 		},
 		{
 			name: "the help a person reads",
@@ -1091,11 +1115,11 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 	}
 }
 
-// namesPrompt drops the file block, so the prompt is judged on the instructions
-// aritu wrote rather than on the file a caller happened to hand it.
+// namesPrompt drops the file section, so the prompt is judged on the
+// instructions aritu wrote rather than on the file a caller happened to hand it.
 func namesPrompt(granularity rule.Granularity) string {
-	built := lint.BuildNamesPrompt(granularity, []string{"tests"}, lint.SourceFile{Path: "subject"})
-	instructions, _, _ := strings.Cut(built, "=== FILE:")
+	built := lint.BuildNamesPrompt(granularity, lint.SourceFile{Path: "subject"})
+	instructions, _, _ := strings.Cut(built, "<file ")
 	return instructions
 }
 

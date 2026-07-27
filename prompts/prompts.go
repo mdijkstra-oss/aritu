@@ -5,168 +5,107 @@
 // repository configures and points at; a prompt is engine behaviour, and a binary
 // whose question could change under it would report verdicts that mean something
 // different from one machine to the next.
+//
+// The two model calls get a folder each: splitter/ lists a file's units, linter/
+// judges them. Each folder holds the frame — instructions.md ahead of the work,
+// task.md after it — and one file per unit kind, named for the granularity that
+// selects it. A prompt is those pieces joined as named sections, so the frame can
+// point at a section by name and the pieces never interpolate into each other.
 package prompts
 
 import (
 	"embed"
 	"fmt"
-	"io/fs"
-	"path"
-	"slices"
 	"strings"
 )
 
-// Verdict renders the prompt that asks for one verdict per unit: the generic
-// framing, then whatever fragments the rule asked to include, then the rule.
-func Verdict(includes []string, rulePrompt, units, sources string) string {
-	return render("verdict.md", map[string]string{
-		"fragments": join(includes, verdictFragment),
-		"rule":      strings.TrimSpace(rulePrompt),
-		"units":     strings.TrimSpace(units),
-		"sources":   strings.TrimSpace(sources),
+// File is one source file as a prompt shows it to the model.
+type File struct {
+	Path    string
+	Content string
+}
+
+// Unit is one judged thing: Name is the identifier a reader sees when it fails,
+// Key is what the model answers under. They differ because a key has to be a tidy
+// JSON property while a name has to stay exactly what CI prints.
+type Unit struct {
+	Name string
+	Key  string
+}
+
+// Linter renders the prompt that asks for one verdict per unit. The first file is
+// the one under judgement; any file after it is context the rule asked to bring
+// along, tagged apart so the model knows which one the units live in.
+func Linter(kind, criterion string, units []Unit, files []File) string {
+	sections := []string{
+		section("instructions", read("linter/instructions.md")),
+		section("unit", read("linter/"+kind+".md")),
+		section("rule", criterion),
+		section("units", unitLines(units)),
+	}
+	sections = append(sections, fileSections(files)...)
+	sections = append(sections, section("task", read("linter/task.md")))
+	return join(sections)
+}
+
+// Splitter renders the prompt that lists a file's units of one kind. It carries
+// no rule: the units of a file are the same whichever rule is about to judge
+// them, which is what lets one listing serve every rule at the same granularity.
+func Splitter(kind string, file File) string {
+	return join([]string{
+		section("instructions", read("splitter/instructions.md")),
+		section("unit", read("splitter/"+kind+".md")),
+		fileSection("file", file),
+		section("task", read("splitter/task.md")),
 	})
 }
 
-// Enumerate renders the prompt that lists a file's units. It carries no rule, only
-// the same fragments: the units of a file are the same whichever rule is about to
-// judge them, which is what lets one enumeration serve every rule that includes the
-// same fragments.
-func Enumerate(includes []string, source string) string {
-	return render("enumerate.md", map[string]string{
-		"fragments": join(includes, enumerateFragment),
-		"source":    strings.TrimSpace(source),
-	})
-}
-
-// Known names every fragment a rule may include, sorted. Rules are loaded from a
-// repository and prompts are not, so an include naming a fragment this binary does
-// not carry has to be caught when the rule is read.
-func Known() []string {
-	entries, err := fs.ReadDir(files, fragmentDir)
-	if err != nil {
-		panic(fmt.Sprintf("embedded fragment directory: %v", err))
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		name, isVerdict := strings.CutSuffix(entry.Name(), ".md")
-		if !isVerdict || strings.HasSuffix(name, enumerateSuffix) {
-			continue
-		}
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	return names
-}
-
-// IsKnown reports whether a rule may include the named fragment.
-func IsKnown(name string) bool {
-	return slices.Contains(Known(), name)
-}
-
-//go:embed *.md fragments/*.md
+//go:embed linter/*.md splitter/*.md
 var files embed.FS
 
-const (
-	fragmentDir     = "fragments"
-	enumerateSuffix = ".enumerate"
-)
-
-// verdictFragment is what a fragment contributes to a verdict call, and
-// enumerateFragment what it contributes to an enumeration.
-//
-// The enumeration gets both halves: what a test, a scope and a case are is the same
-// answer whether the model is listing them or judging them, and only the listing
-// half — what to write down and what to leave out — is enumeration's alone. A
-// fragment with nothing to say about listing has no second file.
-func verdictFragment(name string) string {
-	return read(path.Join(fragmentDir, name+".md"))
+func section(name, body string) string {
+	return "<" + name + ">\n" + strings.TrimSpace(body) + "\n</" + name + ">"
 }
 
-func enumerateFragment(name string) string {
-	shared := verdictFragment(name)
-	listing := readOptional(path.Join(fragmentDir, name+enumerateSuffix+".md"))
-	if listing == "" {
-		return shared
-	}
-	return shared + "\n\n" + listing
-}
-
-func join(includes []string, contribution func(string) string) string {
-	parts := make([]string, 0, len(includes))
-	for _, name := range includes {
-		if part := strings.TrimSpace(contribution(name)); part != "" {
-			parts = append(parts, part)
+// fileSections tags the first file as the one under judgement and every later
+// one as the source it was asked to bring along.
+func fileSections(handed []File) []string {
+	sections := make([]string, 0, len(handed))
+	for at, f := range handed {
+		tag := "file"
+		if at > 0 {
+			tag = "source"
 		}
+		sections = append(sections, fileSection(tag, f))
 	}
-	return strings.Join(parts, "\n\n")
+	return sections
 }
 
-// render substitutes every {{name}} in a template. What is checked for a
-// placeholder nobody supplied is the template, never the result: the values carry
-// source code, and a file holding braces of its own — a Go composite literal such
-// as []Param{{...}}, a Handlebars view, a Go template — is the ordinary input this
-// tool exists to read rather than a prompt this package failed to fill.
-func render(name string, values map[string]string) string {
-	template := read(name)
-	if unfilled, hasUnfilled := findUnfilled(template, values); hasUnfilled {
-		panic(fmt.Sprintf("prompt %s leaves %s unfilled", name, unfilled))
-	}
-	rendered := template
-	for key, value := range values {
-		rendered = strings.ReplaceAll(rendered, "{{"+key+"}}", value)
-	}
-	return collapseBlankRuns(rendered)
+// fileSection carries the content verbatim: a file is the input this tool exists
+// to read, never a template for it to fill.
+func fileSection(tag string, f File) string {
+	return fmt.Sprintf("<%s path=%q>\n%s\n</%s>", tag, f.Path, strings.Trim(f.Content, "\n"), tag)
 }
 
-// collapseBlankRuns closes the gap a fragment nobody included leaves behind, so an
-// omitted include costs no stray blank lines in the prompt.
-func collapseBlankRuns(text string) string {
-	for strings.Contains(text, "\n\n\n") {
-		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
+func unitLines(units []Unit) string {
+	lines := make([]string, 0, len(units))
+	for _, unit := range units {
+		lines = append(lines, fmt.Sprintf("%s   ->   %s", unit.Name, unit.Key))
 	}
-	return strings.TrimSpace(text) + "\n"
+	return strings.Join(lines, "\n")
 }
 
-// findUnfilled reports the first placeholder the template carries that no value
-// answers, so a typo in a template is still caught before the braces reach a model.
-// An opening brace the template never closes counts as one.
-func findUnfilled(template string, values map[string]string) (string, bool) {
-	for rest := template; ; {
-		opened := strings.Index(rest, "{{")
-		if opened < 0 {
-			return "", false
-		}
-		rest = rest[opened+2:]
-		closed := strings.Index(rest, "}}")
-		if closed < 0 {
-			return "{{", true
-		}
-		if key := rest[:closed]; !isSupplied(key, values) {
-			return "{{" + key + "}}", true
-		}
-		rest = rest[closed+2:]
-	}
+func join(sections []string) string {
+	return strings.Join(sections, "\n\n") + "\n"
 }
 
-func isSupplied(key string, values map[string]string) bool {
-	_, supplied := values[key]
-	return supplied
-}
-
-// read panics because the templates are embedded: a name that does not resolve is a
-// typo in this package, caught by the first test that renders anything.
+// read panics because the prompts are embedded: a name that does not resolve is a
+// typo in this package or a granularity without its kind file, caught by the
+// first test that renders anything.
 func read(name string) string {
 	raw, err := files.ReadFile(name)
 	if err != nil {
 		panic(fmt.Sprintf("embedded prompt %s: %v", name, err))
-	}
-	return strings.TrimSpace(string(raw))
-}
-
-func readOptional(name string) string {
-	raw, err := files.ReadFile(name)
-	if err != nil {
-		return ""
 	}
 	return strings.TrimSpace(string(raw))
 }

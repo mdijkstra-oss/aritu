@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -41,6 +42,7 @@ type CLI struct {
 	Output   string        `help:"How to render the report: pretty or json." default:"${output}"`
 	Rules    string        `help:"Directory holding one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
 	Timeout  time.Duration `help:"Deadline for the whole run, so a hung endpoint cannot hang a commit hook." default:"${timeout}"`
+	Debug    bool          `help:"Print each prompt on stderr instead of calling the model. Nothing is judged and no endpoint is needed."`
 	Apply    ApplyCmd      `cmd:"" help:"Judge files against rules."`
 	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
 	Rulebook RulebookCmd   `cmd:"" help:"Write the enabled rules as a document to follow before writing."`
@@ -212,6 +214,9 @@ type judged func(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr 
 // answered once, in the table below, where each command is named.
 func judging(body judged) command {
 	return func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+		if cli.Debug {
+			return body(ctx, cli, debugging(stderr), stdout, stderr)
+		}
 		ask, err := askFor(cli)
 		if err != nil {
 			fmt.Fprintf(stderr, "aritu: %v\n", err)
@@ -219,6 +224,52 @@ func judging(body judged) command {
 		}
 		return body(ctx, cli, ask, stdout, stderr)
 	}
+}
+
+// debugging answers every call itself: the prompt body is printed and the reply
+// is fabricated, so a debug run shows exactly what would be sent without a
+// request leaving the process — no endpoint is needed and nothing is judged. The
+// splitter is answered with two placeholder units, which is what lets the linter
+// prompt render whole, units section and all. Prompts go to stderr with the
+// report untouched on stdout, and the lock keeps concurrent calls from
+// interleaving their bodies.
+func debugging(w io.Writer) service.Ask {
+	var mu sync.Mutex
+	return func(_ context.Context, req service.Request) (json.RawMessage, error) {
+		mu.Lock()
+		fmt.Fprintf(w, "--- %s prompt ---\n%s\n", callNameFor(req), req.Prompt)
+		mu.Unlock()
+		return debugReply(req)
+	}
+}
+
+// debugReply satisfies whichever schema the call carries. A verdict reply names
+// every key the schema requires, so the fabricated pass flows through the same
+// checks a real answer would.
+func debugReply(req service.Request) (json.RawMessage, error) {
+	if string(req.Schema) == lint.NamesSchema {
+		return json.Marshal(map[string][]string{"names": {"DebugUnitOne", "DebugUnitTwo"}})
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(req.Schema, &schema); err != nil {
+		return nil, fmt.Errorf("debug reply: %w", err)
+	}
+	answers := make(map[string]map[string]any, len(schema.Properties))
+	for key := range schema.Properties {
+		answers[key] = map[string]any{"satisfies": true, "reason": "fabricated by --debug, nothing was judged"}
+	}
+	return json.Marshal(answers)
+}
+
+// callNameFor tells the two calls apart by the schema each carries, which is the
+// only thing about a request that says what it is for.
+func callNameFor(req service.Request) string {
+	if string(req.Schema) == lint.NamesSchema {
+		return "splitter"
+	}
+	return "linter"
 }
 
 var commands = map[string]command{
@@ -242,10 +293,15 @@ func runApply(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.
 	started := time.Now()
 	opts, setupErr := applyOptions(cli)
 	report := reporterFor(cli.Output, stdout, wantsColour(stdout))
+	if cli.Debug {
+		report = silentReporter()
+	}
 
 	var results []run.Result
 	if setupErr == nil {
-		run.Announce(stderr, opts)
+		if !cli.Debug {
+			run.Announce(stderr, opts)
+		}
 		opts.Observe = report.observe
 		results = run.Run(ctx, ask, opts)
 	}
@@ -623,6 +679,16 @@ func prettyReporter(w io.Writer, colour bool) reporter {
 			}
 			return stream.Summary(s.Results, s.Options, s.Elapsed)
 		},
+	}
+}
+
+// silentReporter writes nothing at all: a debug run's verdicts are fabricated,
+// and reporting them would read as a judgement nobody made. The prompts on
+// stderr are the whole output.
+func silentReporter() reporter {
+	return reporter{
+		observe: func(run.Result) {},
+		finish:  func(sweep) error { return nil },
 	}
 }
 

@@ -57,15 +57,17 @@ var (
 // reply renders a verdict for the file's two tests under the keys the schema
 // actually names. Restating those keys as literals would pin every stub here to
 // one spelling of the key derivation, so the stubs derive them the same way the
-// code under test does.
+// code under test does: from the whole list, because a key carries the unit's
+// position in it.
 func reply(given ...verdictAnswer) string {
 	return replyUnder([]string{"TestParsesHost", "TestRejectsPort"}, given...)
 }
 
 func replyUnder(names []string, given ...verdictAnswer) string {
+	units := UnitsFor(names)
 	rendered := map[string]verdictAnswer{}
 	for at, answer := range given {
-		rendered[keyOf(names[at])] = answer
+		rendered[units[at].Key] = answer
 	}
 	encoded, err := json.Marshal(rendered)
 	if err != nil {
@@ -76,10 +78,6 @@ func replyUnder(names []string, given ...verdictAnswer) string {
 
 func answers(satisfies bool, reason string) verdictAnswer {
 	return verdictAnswer{Satisfies: satisfies, Reason: reason}
-}
-
-func keyOf(name string) string {
-	return UnitsFor([]string{name})[0].Key
 }
 
 func TestApply(t *testing.T) {
@@ -150,20 +148,20 @@ func TestApply(t *testing.T) {
 			wantPromptContains: []string{rulePrompt, testFileName, sourceFileName, "func Parse(raw string) error"},
 		},
 		{
-			name:     "verdict naming a function that was not listed errors",
+			name:     "verdict naming a unit that was not listed errors",
 			rule:     testOnly,
 			votes:    4,
 			names:    ok(bothNames),
 			verdicts: repeat(4, ok(extraName)),
-			wantErr:  "unexpected " + keyOf("TestGhost"),
+			wantErr:  "unexpected u03_test_ghost",
 		},
 		{
-			name:     "verdict dropping a listed function errors",
+			name:     "verdict dropping a listed unit errors",
 			rule:     testOnly,
 			votes:    4,
 			names:    ok(bothNames),
 			verdicts: repeat(4, ok(droppedName)),
-			wantErr:  "missing " + keyOf("TestRejectsPort"),
+			wantErr:  "missing u02_test_rejects_port",
 		},
 		{
 			name:    "duplicate names from the name call error",
@@ -206,7 +204,7 @@ func TestApply(t *testing.T) {
 			rule:    testOnly,
 			votes:   4,
 			names:   ok(`{"names":`),
-			wantErr: "reading the test names",
+			wantErr: "reading the unit names",
 		},
 		{
 			name:     "unparseable verdict reply errors",
@@ -416,25 +414,39 @@ func TestExitFor(t *testing.T) {
 	}
 }
 
-// TestBuildNamesPrompt asks both enumerating granularities for the same file. Both
-// must produce the same leaf question: coarser levels roll up from the leaves in
-// code, so a second, coarser enumeration prompt would be a second answer to buy for
-// something a string split already knows.
+// TestBuildNamesPrompt asks each enumerating granularity for the same file. Each
+// kind gets its own question: the splitter for functions asks for declarations,
+// and the one for test cases asks for each leaf under its composite name.
 func TestBuildNamesPrompt(t *testing.T) {
-	want := []string{
-		"smallest thing this file's framework runs",
-		"enclosing scope", "joining its enclosing scopes", `" > "`,
-		"one row of a table of cases", "parametrised argument set",
-		`"Name (case name)"`, "Parser > Address > ParsesHostBeforeColon",
-		"#01", "built at run time",
-		"helper functions", "setup and teardown hooks",
-		"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
+	tests := []struct {
+		granularity rule.Granularity
+		want        []string
+	}{
+		{
+			granularity: rule.GranularityFunction,
+			want: []string{
+				"function or method", "declaration order",
+				"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
+			},
+		},
+		{
+			granularity: rule.GranularityTestCase,
+			want: []string{
+				"smallest thing this file's framework runs",
+				"enclosing scope", `" > "`,
+				"one row of a table of cases", "parametrised argument set",
+				`"Name (case name)"`, "Parser > Address > ParsesHostBeforeColon",
+				"#01", "built at run time",
+				"helper functions", "setup and teardown hooks",
+				"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
+			},
+		},
 	}
 
-	for _, granularity := range []rule.Granularity{rule.GranularityFunction, rule.GranularityTestCase} {
-		t.Run(granularity.String()+" granularity asks for each case as its own leaf", func(t *testing.T) {
-			prompt := BuildNamesPrompt(granularity, []string{"tests"}, SourceFile{Path: "pkg/parser_test.go", Content: testFileSource})
-			for _, want := range want {
+	for _, tc := range tests {
+		t.Run(tc.granularity.String()+" granularity asks for its own kind of unit", func(t *testing.T) {
+			prompt := BuildNamesPrompt(tc.granularity, SourceFile{Path: "pkg/parser_test.go", Content: testFileSource})
+			for _, want := range tc.want {
 				if !strings.Contains(prompt, want) {
 					t.Errorf("names prompt does not contain %q:\n%s", want, prompt)
 				}
@@ -449,7 +461,7 @@ func TestBuildNamesPromptPanicsAtFileGranularity(t *testing.T) {
 			t.Error("BuildNamesPrompt did not panic at file granularity, where no enumeration call should ever be made")
 		}
 	}()
-	_ = BuildNamesPrompt(rule.GranularityFile, []string{"tests"}, SourceFile{Path: "pkg/parser_test.go"})
+	_ = BuildNamesPrompt(rule.GranularityFile, SourceFile{Path: "pkg/parser_test.go"})
 }
 
 func TestBuildVerdictPrompt(t *testing.T) {
@@ -458,13 +470,13 @@ func TestBuildVerdictPrompt(t *testing.T) {
 		{Path: "pkg/parser.go", Content: sourceFileSource},
 	}
 	units := UnitsFor([]string{"TestParsesHost", "TestRejectsPort (empty input)"})
-	judged := rule.Rule{Name: "named-for-behavior", Include: []string{"tests"}, Prompt: "\n\n" + rulePrompt + "\n"}
+	judged := rule.Rule{Name: "named-for-behavior", Granularity: rule.GranularityTestCase, Prompt: "\n\n" + rulePrompt + "\n"}
 	prompt := BuildVerdictPrompt(judged, files, units)
 
 	t.Run("the rule follows the shared guidance and precedes the units", func(t *testing.T) {
-		shared := strings.Index(prompt, "Writing the reason")
+		shared := strings.Index(prompt, "<instructions>")
 		rule := strings.Index(prompt, rulePrompt)
-		listed := strings.Index(prompt, "the key to answer under")
+		listed := strings.Index(prompt, units[0].Name+"   ->   ")
 		if !(shared < rule && rule < listed) {
 			t.Errorf("layering is shared=%d rule=%d units=%d, want ascending:\n%s", shared, rule, listed, prompt)
 		}
@@ -475,13 +487,13 @@ func TestBuildVerdictPrompt(t *testing.T) {
 		want string
 	}{
 		{"heads the rule with the same title the rulebook gives it", "## Named for behavior"},
-		{"names the key to answer under", "the key to answer under"},
+		{"names where the answer goes", "the key on the right is only where the answer goes"},
 		{"judges the unit as written rather than the key", "as written on the left"},
-		{"lists the plain function unit against itself", "- TestParsesHost   ->   " + keyOf("TestParsesHost")},
-		{"lists the leaf unit against its key", "- TestRejectsPort (empty input)   ->   " + keyOf("TestRejectsPort (empty input)")},
-		{"names the test file", "pkg/parser_test.go"},
+		{"lists the plain unit against its key", "TestParsesHost   ->   " + units[0].Key},
+		{"lists the leaf unit against its key", "TestRejectsPort (empty input)   ->   " + units[1].Key},
+		{"names the test file", `<file path="pkg/parser_test.go">`},
 		{"carries the test file contents", "func TestParsesHost(t *testing.T) {}"},
-		{"names the source file", "pkg/parser.go"},
+		{"names the source file", `<source path="pkg/parser.go">`},
 		{"carries the source file contents", "func Parse(raw string) error"},
 	}
 
@@ -567,74 +579,66 @@ func TestUnitsFor(t *testing.T) {
 		want  []Unit
 	}{
 		{
-			name:  "a plain test is snake cased behind its digest",
+			name:  "a plain test is snake cased behind its position",
 			names: []string{"TestParsesHost"},
-			want:  []Unit{{Name: "TestParsesHost", Key: "668ba077.test_parses_host"}},
-		},
-		{
-			name:  "a case answers under a part of its own",
-			names: []string{"TestParseConfig (extracts host before colon)"},
-			want: []Unit{{
-				Name: "TestParseConfig (extracts host before colon)",
-				Key:  "0f931c49.test_parse_config.extracts_host_before_colon",
-			}},
+			want:  []Unit{{Name: "TestParsesHost", Key: "u01_test_parses_host"}},
 		},
 		{
 			name:  "punctuation and repeated spaces collapse to one separator",
 			names: []string{"TestParse (rejects a 24:00 clock -- politely)"},
 			want: []Unit{{
 				Name: "TestParse (rejects a 24:00 clock -- politely)",
-				Key:  "64a33088.test_parse.rejects_a_24_00_clock_politely",
+				Key:  "u01_test_parse_rejects_a_24_00_clock_politely",
 			}},
 		},
 		{
-			name:  "an acronym breaks where the word after it begins",
-			names: []string{"TestParseHTTPHeader"},
-			want:  []Unit{{Name: "TestParseHTTPHeader", Key: "f19c5fb9.test_parse_http_header"}},
-		},
-		{
-			name:  "enclosing scopes each answer under a part of their own",
+			name:  "enclosing scopes read as words of one key",
 			names: []string{"Parser > Address > ParsesHostBeforeColon"},
 			want: []Unit{{
 				Name: "Parser > Address > ParsesHostBeforeColon",
-				Key:  "6db0dea6.parser.address.parses_host_before_colon",
+				Key:  "u01_parser_address_parses_host_before_colon",
 			}},
 		},
 		{
-			name:  "two cases that normalise alike are still told apart by their digests",
+			name:  "two cases that normalise alike are still told apart by their positions",
 			names: []string{"TestParse (empty input)", "TestParse (empty  input)"},
 			want: []Unit{
-				{Name: "TestParse (empty input)", Key: "f87e09ec.test_parse.empty_input"},
-				{Name: "TestParse (empty  input)", Key: "9b14db0e.test_parse.empty_input"},
+				{Name: "TestParse (empty input)", Key: "u01_test_parse_empty_input"},
+				{Name: "TestParse (empty  input)", Key: "u02_test_parse_empty_input"},
 			},
 		},
 		{
 			name:  "a case with nothing to normalise still gets a key",
 			names: []string{"TestParse (!!!)"},
-			want:  []Unit{{Name: "TestParse (!!!)", Key: "bd3bd338.test_parse"}},
+			want:  []Unit{{Name: "TestParse (!!!)", Key: "u01_test_parse"}},
 		},
 		{
-			name:  "a path answers with one part per segment",
+			name:  "a name that normalises to nothing is its position alone",
+			names: []string{"!!!"},
+			want:  []Unit{{Name: "!!!", Key: "u01"}},
+		},
+		{
+			name:  "a path reads as one key with a word per segment",
 			names: []string{"internal/parser/parser_test.go"},
 			want: []Unit{{
 				Name: "internal/parser/parser_test.go",
-				Key:  "9c4e1a77.internal.parser.parser_test_go",
+				Key:  "u01_internal_parser_parser_test_go",
 			}},
 		},
 		{
-			name:  "a name longer than the API allows keeps whole trailing parts",
+			name:  "a name longer than the API allows keeps its tail",
 			names: []string{"TestSelftestStillPrintsItsTable (when the model cannot be reached at all today)"},
 			want: []Unit{{
 				Name: "TestSelftestStillPrintsItsTable (when the model cannot be reached at all today)",
-				Key:  "57fe9293.when_the_model_cannot_be_reached_at_all_today",
+				Key:  "u01_ints_its_table_when_the_model_cannot_be_reached_at_all_today",
 			}},
 		},
 		{
 			name:  "the same function with different cases keeps them distinct",
 			names: []string{"TestParse (accepts a port)", "TestParse (rejects a port)"},
 			want: []Unit{
-				{Name: "TestParse (accepts a port)", Key: "03d3c518.test_parse.accepts_a_port"},
-				{Name: "TestParse (rejects a port)", Key: "cf7f6e6d.test_parse.rejects_a_port"},
+				{Name: "TestParse (accepts a port)", Key: "u01_test_parse_accepts_a_port"},
+				{Name: "TestParse (rejects a port)", Key: "u02_test_parse_rejects_a_port"},
 			},
 		},
 	}
@@ -669,7 +673,7 @@ func TestVerdictSchemaForNamesEveryKeyAndForbidsAnyOther(t *testing.T) {
 		t.Fatalf("schema is not valid JSON: %v", err)
 	}
 
-	wantKeys := []string{keyOf("TestParsesHost"), keyOf("TestParse (empty input)")}
+	wantKeys := []string{units[0].Key, units[1].Key}
 	if !slices.Equal(slices.Sorted(maps.Keys(schema.Properties)), slices.Sorted(slices.Values(wantKeys))) {
 		t.Errorf("properties = %v, want %v", slices.Sorted(maps.Keys(schema.Properties)), wantKeys)
 	}
@@ -756,12 +760,12 @@ func TestUnitsAtFileGranularityAnswerUnderAKeyThatSurvivesBeingAToolParameter(t 
 		{
 			name: "a short path stays readable in full",
 			file: "internal/lib/vote/vote_test.go",
-			want: "6eb1c941.internal.lib.vote.vote_test_go",
+			want: "u01_internal_lib_vote_vote_test_go",
 		},
 		{
-			name: "a path over the ceiling keeps the file name behind a digest",
+			name: "a path over the ceiling keeps its tail behind the position",
 			file: "rules/no-gaps/fixtures/fail-go-insufficient-funds-never-reached/withdraw_test.go",
-			want: "588ab92e.withdraw_test_go",
+			want: "u01_es_fail_go_insufficient_funds_never_reached_withdraw_test_go",
 		},
 	}
 
@@ -785,9 +789,9 @@ func TestUnitsAtFileGranularityAnswerUnderAKeyThatSurvivesBeingAToolParameter(t 
 	}
 }
 
-// TestKeysStayUniqueWhereTruncationWouldNot is the reason a digest beats a cut:
-// two files under one long directory reduce to the same prefix, and a schema
-// cannot carry the same property twice.
+// TestKeysStayUniqueWhereTruncationWouldNot is the reason the position prefix
+// beats a bare cut: two files under one long directory reduce to the same string,
+// and a schema cannot carry the same property twice.
 func TestKeysStayUniqueWhereTruncationWouldNot(t *testing.T) {
 	const dir = "rules/no-redundancy/fixtures/pass-go-boundary-pair-at-and-past-limit/"
 
@@ -813,19 +817,19 @@ func TestKeysNeverEndOnASeparator(t *testing.T) {
 		wantK string
 	}{
 		{
-			name:  "a path over the ceiling never opens mid-word",
+			name:  "a path over the ceiling is cut without a separator surviving the cut",
 			unit:  "rules/no-gaps/fixtures/fail-go-insufficient-funds-never-reached/withdraw_test.go",
-			wantK: "588ab92e.withdraw_test_go",
+			wantK: "u01_es_fail_go_insufficient_funds_never_reached_withdraw_test_go",
 		},
 		{
 			name:  "a case name ending in punctuation keeps nothing trailing",
 			unit:  "TestParse (rejects blank input --)",
-			wantK: "2c87c8a7.test_parse.rejects_blank_input",
+			wantK: "u01_test_parse_rejects_blank_input",
 		},
 		{
 			name:  "a case that normalises to nothing leaves no separator behind it",
 			unit:  "TestParse (!!!)",
-			wantK: "bd3bd338.test_parse",
+			wantK: "u01_test_parse",
 		},
 	}
 
