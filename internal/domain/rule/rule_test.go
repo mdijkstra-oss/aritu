@@ -30,21 +30,6 @@ func TestParsePrompt(t *testing.T) {
 			want: Prompt{IncludeSource: false, Granularity: GranularityTestCase, Targets: []string{"tests"}, Body: "Judge the test."},
 		},
 		{
-			name: "an include names a fragment the binary carries",
-			raw:  "---\ntargets: [tests]\ninclude: [tests]\ninclude_source: true\ngranularity: function\n---\nbody",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Include: []string{"tests"}, Body: "body"},
-		},
-		{
-			name:    "an include naming a fragment nobody wrote is refused",
-			raw:     "---\ntargets: [tests]\ninclude: [haiku]\ninclude_source: true\ngranularity: function\n---\nbody",
-			wantErr: true,
-		},
-		{
-			name:    "the listing half is not includable on its own",
-			raw:     "---\ntargets: [tests]\ninclude: [tests.enumerate]\ninclude_source: true\ngranularity: function\n---\nbody",
-			wantErr: true,
-		},
-		{
 			name: "a rule may target a kind that is not about tests at all",
 			raw:  "---\ntargets: [docs]\ninclude_source: false\ngranularity: file\n---\nbody",
 			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"docs"}, Body: "body"},

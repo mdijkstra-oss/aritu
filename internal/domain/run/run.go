@@ -52,9 +52,8 @@ type Envelope struct {
 // is recorded rather than aborting the run, so one unreachable file cannot hide the
 // rest.
 //
-// Each file is enumerated once, at test granularity, however many rules judge it;
-// the coarser levels roll up from that list. How many calls run at once is bounded
-// by the ask, not here.
+// Each file is enumerated once per granularity, however many rules judge it at
+// that level. How many calls run at once is bounded by the ask, not here.
 func Run(ctx context.Context, ask service.Ask, opts Options) []Result {
 	targets := targetsOf(opts)
 	results := make([]Result, len(targets))
@@ -282,10 +281,10 @@ func withError(r lint.Report, err error) lint.Report {
 	return r
 }
 
-// leafCache enumerates each file once however many rules judge it. The entry is
-// claimed under the lock and filled under its own Once, so rules that start
-// together on one file wait on a single call instead of racing into several — a
-// check-then-call would ask the same question once per rule.
+// leafCache enumerates each file once per granularity however many rules judge
+// it there. The entry is claimed under the lock and filled under its own Once, so
+// rules that start together on one file wait on a single call instead of racing
+// into several — a check-then-call would ask the same question once per rule.
 type leafCache struct {
 	mu      sync.Mutex
 	entries map[string]*leafEntry
@@ -322,11 +321,12 @@ func (c *leafCache) entryFor(key string) *leafEntry {
 	return entry
 }
 
-// enumerationKey is the file and the fragments the enumeration prompt was built
+// enumerationKey is the file and the granularity the splitter prompt was built
 // from. Two rules over one file share an answer only when they asked the same
-// question, and a rule including a different fragment is asking a different one.
+// question, and a rule at a different granularity is asking for a different kind
+// of unit.
 func enumerationKey(target lint.Options) string {
-	return target.File + "\x00" + strings.Join(target.Rule.Include, ",")
+	return target.File + "\x00" + target.Rule.Granularity.String()
 }
 
 func writeResult(b *strings.Builder, result Result, colour bool) error {

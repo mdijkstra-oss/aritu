@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"os"
-	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -23,19 +21,13 @@ import (
 // exists to catch.
 type Exit int
 
-// Unit is one judged thing: Name is the identifier a reader sees when it fails,
-// Key is what the model answers under. They differ because a key has to be a tidy
-// JSON property while a name has to stay exactly what CI prints.
-type Unit struct {
-	Name string
-	Key  string
-}
+// Unit is one judged thing, as the prompts package defines it: the name a reader
+// sees and the key the model answers under. The alias keeps it one type, so a
+// unit built here is a unit rendered there without a copy in between.
+type Unit = prompts.Unit
 
 // SourceFile is a file's path and contents as handed to the model.
-type SourceFile struct {
-	Path    string
-	Content string
-}
+type SourceFile = prompts.File
 
 // Report is the tool's output. Verdicts maps each judged unit to how many of
 // Votes runs judged it to satisfy the rule; only a count equal to Votes passes.
@@ -89,18 +81,16 @@ func Apply(ctx context.Context, ask service.Ask, opts Options) (Report, error) {
 	return voteOn(ctx, ask, opts, files, UnitsAt(opts.Rule.Granularity, opts.File, leaves))
 }
 
-// Enumerate lists a file's leaves, always at test granularity. It is deliberately
-// independent of the rule: the enumeration prompt is built from the granularity and
-// the file alone, so every rule over one file would otherwise ask the same question
-// and pay for the same answer. Coarser levels roll up from this with UnitsAt.
+// Enumerate lists a file's units at the rule's own granularity. It is
+// deliberately independent of the rule's text: the splitter prompt is built from
+// the granularity and the file alone, so every rule judging one file at one
+// level asks the same question and can share the same answer.
 func Enumerate(ctx context.Context, ask service.Ask, opts Options) ([]string, error) {
-	test, err := readSourceFile(opts.File)
+	file, err := readSourceFile(opts.File)
 	if err != nil {
 		return nil, err
 	}
-	enumerating := opts
-	enumerating.Rule.Granularity = rule.GranularityTestCase
-	return askNames(ctx, ask, enumerating, test)
+	return askNames(ctx, ask, opts, file)
 }
 
 // NeedsEnumeration reports whether the model has to list a rule's units at all.
@@ -110,18 +100,14 @@ func NeedsEnumeration(granularity rule.Granularity) bool {
 	return granularity != rule.GranularityFile
 }
 
-// UnitsAt narrows a file's leaves to the units one rule judges. A test that
-// declares no cases appears in the leaf list as its bare name and one that declares
-// cases appears once per case, so the distinct halves in front of the case are
-// exactly the set of tests — the roll-up is a string split rather than a second
-// question.
+// UnitsAt derives the units one rule judges. At file granularity the unit is the
+// path; at every other level it is whatever the splitter listed, because each
+// granularity asked for its own kind of unit and got exactly that.
 func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit {
 	switch granularity {
 	case rule.GranularityFile:
 		return UnitsFor([]string{file})
-	case rule.GranularityFunction:
-		return UnitsFor(distinctFunctions(leaves))
-	case rule.GranularityTestCase:
+	case rule.GranularityFunction, rule.GranularityTestCase:
 		return UnitsFor(leaves)
 	default:
 		panic(fmt.Sprintf("unknown granularity: %d", int(granularity)))
@@ -166,20 +152,6 @@ func voteOn(ctx context.Context, ask service.Ask, opts Options, files []SourceFi
 	return report, nil
 }
 
-func distinctFunctions(leaves []string) []string {
-	functions := make([]string, 0, len(leaves))
-	seen := make(map[string]bool, len(leaves))
-	for _, leaf := range leaves {
-		function, _, _ := splitUnit(leaf)
-		if seen[function] {
-			continue
-		}
-		seen[function] = true
-		functions = append(functions, function)
-	}
-	return functions
-}
-
 // ExitFor derives the exit status of a completed report.
 func ExitFor(r Report) Exit {
 	if vote.IsUnanimous(r.Verdicts, r.Votes) {
@@ -188,13 +160,14 @@ func ExitFor(r Report) Exit {
 	return ExitFail
 }
 
-// BuildNamesPrompt asks the model to enumerate a file's units. It is never called
-// at file granularity, where the unit is the path and no model is needed to know it.
-func BuildNamesPrompt(granularity rule.Granularity, includes []string, source SourceFile) string {
+// BuildNamesPrompt asks the model to list a file's units of one rule's kind. It
+// is never called at file granularity, where the unit is the path and no model is
+// needed to know it.
+func BuildNamesPrompt(granularity rule.Granularity, source SourceFile) string {
 	if !NeedsEnumeration(granularity) {
 		panic(fmt.Sprintf("no names prompt for granularity: %s", granularity))
 	}
-	return prompts.Enumerate(includes, formatFileBlock(source))
+	return prompts.Splitter(granularity.String(), source)
 }
 
 // BuildVerdictPrompt frames one rule's criterion around the files under judgement
@@ -208,16 +181,7 @@ func BuildNamesPrompt(granularity rule.Granularity, includes []string, source So
 // worded copy of the standard somebody was given is how a rule ends up meaning two
 // things, so there is only ever the one rendering.
 func BuildVerdictPrompt(judged rule.Rule, files []SourceFile, units []Unit) string {
-	var listed strings.Builder
-	for _, unit := range units {
-		fmt.Fprintf(&listed, "- %s   ->   %s\n", unit.Name, unit.Key)
-	}
-	var sources strings.Builder
-	for _, f := range files {
-		sources.WriteString(formatFileBlock(f))
-		sources.WriteString("\n")
-	}
-	return prompts.Verdict(judged.Include, rule.Section(judged), listed.String(), sources.String())
+	return prompts.Linter(judged.Granularity.String(), rule.Section(judged), units, files)
 }
 
 type namesReply struct {
@@ -264,23 +228,23 @@ func readSourceFile(path string) (SourceFile, error) {
 	return SourceFile{Path: path, Content: string(content)}, nil
 }
 
-func askNames(ctx context.Context, ask service.Ask, opts Options, test SourceFile) ([]string, error) {
+func askNames(ctx context.Context, ask service.Ask, opts Options, file SourceFile) ([]string, error) {
 	raw, err := ask(ctx, service.Request{
-		Prompt: BuildNamesPrompt(opts.Rule.Granularity, opts.Rule.Include, test),
+		Prompt: BuildNamesPrompt(opts.Rule.Granularity, file),
 		Model:  opts.Model,
 		Effort: opts.Effort,
 		Schema: json.RawMessage(NamesSchema),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing the tests in %s: %w", test.Path, err)
+		return nil, fmt.Errorf("listing the units in %s: %w", file.Path, err)
 	}
 
 	var reply namesReply
 	if err := json.Unmarshal(raw, &reply); err != nil {
-		return nil, fmt.Errorf("reading the test names for %s: %w", test.Path, err)
+		return nil, fmt.Errorf("reading the unit names for %s: %w", file.Path, err)
 	}
 	if duplicate, hasDuplicate := findDuplicate(reply.Names); hasDuplicate {
-		return nil, fmt.Errorf("test unit %q listed more than once in %s", duplicate, test.Path)
+		return nil, fmt.Errorf("unit %q listed more than once in %s", duplicate, file.Path)
 	}
 	return reply.Names, nil
 }
@@ -394,15 +358,11 @@ func checkKeysMatch(units []Unit, answers map[string]verdictAnswer, file string)
 	return fmt.Errorf("verdicts for %s do not cover exactly the units listed: %s", file, strings.Join(problems, "; "))
 }
 
-func formatFileBlock(f SourceFile) string {
-	return fmt.Sprintf("=== FILE: %s ===\n%s\n=== END FILE: %s ===\n", f.Path, f.Content, f.Path)
-}
-
 // UnitsFor derives the key each enumerated identifier is answered under.
 func UnitsFor(names []string) []Unit {
 	units := make([]Unit, 0, len(names))
-	for _, name := range names {
-		units = append(units, Unit{Name: name, Key: keyFor(name)})
+	for at, name := range names {
+		units = append(units, Unit{Name: name, Key: keyFor(at, name)})
 	}
 	return units
 }
@@ -457,89 +417,23 @@ func answerSchema() schemaNode {
 	}, []string{"satisfies", "reason"})
 }
 
-// keyFor derives the property a unit answers under: a digest of the whole name,
-// then a normalised form of the name a reader can recognise.
+// keyFor derives the property a unit answers under: its position in the listed
+// units, then a normalised form of the name a reader can recognise.
 //
-// Uniqueness rides entirely on the digest, which is what lets the readable half be
-// cut to fit the API's ceiling. Cutting a readable key on its own is the wrong
+// Uniqueness rides entirely on the position, which is what lets the readable half
+// be cut to fit the API's ceiling. Cutting a readable key on its own is the wrong
 // answer twice over: the prefix that survives is neither unique — two files under
 // one long directory reduce to the same string — nor legible, and dropping a unit's
 // own property would hand it a neighbour's verdict with every count still looking
-// healthy.
-func keyFor(name string) string {
-	digest := fmt.Sprintf("%08x", fnv1aOf(name))
-	readable := fitParts(partsOf(name), maxKeyLength-len(digest)-1)
+// healthy. The tail is kept over the head because it is the half a reader
+// recognises: the file name, the case that failed.
+func keyFor(at int, name string) string {
+	prefix := fmt.Sprintf("u%02d", at+1)
+	readable := strings.Trim(lastChars(snakeCase(name), maxKeyLength-len(prefix)-1), "_")
 	if readable == "" {
-		return digest
+		return prefix
 	}
-	return digest + "." + readable
-}
-
-// partsOf breaks a unit name into the parts a key joins with ".": the segments of a
-// path, the enclosing scopes of a test, and the case in the trailing parenthesis.
-// Each part is normalised on its own, so a separator in the source can never
-// survive as a run of underscores in the key.
-func partsOf(name string) []string {
-	function, caseName, hasCase := splitUnit(name)
-	raw := strings.FieldsFunc(function, isPartBoundary)
-	if hasCase {
-		raw = append(raw, caseName)
-	}
-	parts := make([]string, 0, len(raw))
-	for _, part := range raw {
-		if normalised := snakeCase(part); normalised != "" {
-			parts = append(parts, normalised)
-		}
-	}
-	return parts
-}
-
-func isPartBoundary(r rune) bool {
-	return r == '/' || r == '\\' || r == '>'
-}
-
-// fitParts keeps as many whole trailing parts as the budget allows. The tail is the
-// half a reader recognises — the file name, the case that failed — so whole parts
-// are dropped from the front before a single part is cut at all, and a part is only
-// opened mid-word when one part alone is over the budget.
-func fitParts(parts []string, budget int) string {
-	if len(parts) == 0 || budget <= 0 {
-		return ""
-	}
-	kept := 0
-	length := 0
-	for _, part := range slices.Backward(parts) {
-		grown := length + len(part)
-		if kept > 0 {
-			grown++
-		}
-		if grown > budget {
-			break
-		}
-		length = grown
-		kept++
-	}
-	if kept == 0 {
-		return trimSeparators(lastChars(parts[len(parts)-1], budget))
-	}
-	return strings.Join(parts[len(parts)-kept:], ".")
-}
-
-func fnv1aOf(text string) uint32 {
-	digest := fnv.New32a()
-	digest.Write([]byte(text))
-	return digest.Sum32()
-}
-
-func lastChars(text string, count int) string {
-	if len(text) <= count {
-		return text
-	}
-	return text[len(text)-count:]
-}
-
-func trimSeparators(key string) string {
-	return strings.Trim(key, keySeparators)
+	return prefix + "_" + readable
 }
 
 // maxKeyLength and the character set below are the API's, not ours: a schema
@@ -548,16 +442,12 @@ func trimSeparators(key string) string {
 // be the identifier a reader sees.
 const maxKeyLength = 64
 
-// keySeparators may sit inside a key but never at its end. Each carries one level
-// of the name: "." between the parts, "_" between the words of one part. A colon
-// would read better in front of the digest, but the character set above does not
-// permit one.
-//
-// The trailing-separator rule outlived the transport that forced it, where a key
-// ending on one broke the CLI's derivation of tool parameters. It is kept because
-// the key is what a verdict is answered under and what a report is keyed by, and
-// the unit model is not this feature's to change.
-const keySeparators = "_-."
+func lastChars(text string, count int) string {
+	if len(text) <= count {
+		return text
+	}
+	return text[len(text)-count:]
+}
 
 // splitUnit separates the test from the case a leaf name carries. It takes the
 // last " (" rather than the first because the half in front of it is a namespace
@@ -571,46 +461,29 @@ func splitUnit(name string) (function, caseName string, hasCase bool) {
 	return name[:open], name[open+2 : len(name)-1], true
 }
 
-// snakeCase normalises one part. Camel and acronym boundaries become word breaks,
-// anything outside the key's character set collapses to a single underscore however
-// much of it there was, and no underscore survives at either end. Normalising a
-// part on its own is what keeps "a > b" from reaching the key as three separators.
+// snakeCase normalises a name for the key: anything outside the key's character
+// set collapses to a single underscore however much of it there was, and a word
+// break opens where a capital follows a lower-case letter or digit. Acronym-grade
+// word splitting is deliberately absent — the position prefix already guarantees
+// uniqueness, so the readable half only has to be recognisable.
 func snakeCase(text string) string {
 	var b strings.Builder
-	runes := []rune(text)
 	pendingSeparator := false
-	for at, r := range runes {
+	var previous rune
+	for _, r := range text {
 		if !isWordRune(r) {
 			pendingSeparator = true
 			continue
 		}
-		if b.Len() > 0 && (pendingSeparator || startsWord(runes, at)) {
+		opensWord := unicode.IsUpper(r) && (unicode.IsLower(previous) || unicode.IsDigit(previous))
+		if b.Len() > 0 && (pendingSeparator || opensWord) {
 			b.WriteByte('_')
 		}
 		pendingSeparator = false
+		previous = r
 		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
-}
-
-// startsWord reports whether the rune at an index opens a new word inside a run of
-// letters, so that ParseHTTPHeader breaks into parse, http and header rather than
-// reaching the key as one unreadable word.
-//
-// A capital followed by a lower-case letter closes whatever ran into it, which is
-// what separates the acronym in ParseHTTPHeader from the word after it. The same
-// rule splits IPv6 into i_pv6, and that is the better trade: telling those apart
-// needs a dictionary, and the alternative merges the far more common DoesAThing
-// into does_athing.
-func startsWord(runes []rune, at int) bool {
-	if at == 0 || !unicode.IsUpper(runes[at]) {
-		return false
-	}
-	previous := runes[at-1]
-	if unicode.IsLower(previous) || unicode.IsDigit(previous) {
-		return true
-	}
-	return unicode.IsUpper(previous) && at+1 < len(runes) && unicode.IsLower(runes[at+1])
 }
 
 // isWordRune is deliberately ASCII: a rune outside this set becomes a separator

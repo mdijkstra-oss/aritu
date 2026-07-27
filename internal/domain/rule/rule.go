@@ -10,8 +10,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/matthijn/aritu/prompts"
-
 	"github.com/matthijn/aritu/internal/lib/testpath"
 )
 
@@ -21,7 +19,6 @@ type Rule struct {
 	Dir           string
 	Prompt        string
 	Targets       []string
-	Include       []string
 	IncludeSource bool
 	Granularity   Granularity
 }
@@ -47,7 +44,6 @@ type Prompt struct {
 	IncludeSource bool
 	Granularity   Granularity
 	Targets       []string
-	Include       []string
 	Body          string
 }
 
@@ -59,9 +55,8 @@ const (
 const (
 	// GranularityFile judges the file as a single unit, keyed by its path.
 	GranularityFile Granularity = iota + 1
-	// GranularityFunction judges each thing the file runs or declares under its own
-	// name. Which of them count is the included fragments' answer, not this value's:
-	// with the tests fragment it is each test, with none it is each declaration.
+	// GranularityFunction judges each function or method the file declares under
+	// its own name.
 	GranularityFunction
 	// GranularityTestCase judges each independently nameable leaf: one case of a
 	// test, or the test itself when it declares no cases.
@@ -86,7 +81,6 @@ func Load(rulesDir, name string, knownTargets []string) (Rule, error) {
 		Dir:           dir,
 		Prompt:        prompt.Body,
 		Targets:       prompt.Targets,
-		Include:       prompt.Include,
 		IncludeSource: prompt.IncludeSource,
 		Granularity:   prompt.Granularity,
 	}, nil
@@ -182,14 +176,10 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	if err := checkTargetsAreKnown(front.Targets, knownTargets); err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
 	}
-	if err := checkIncludesAreKnown(front.Include); err != nil {
-		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
-	}
 	return Prompt{
 		IncludeSource: front.IncludeSource,
 		Granularity:   granularity,
 		Targets:       front.Targets,
-		Include:       front.Include,
 		Body:          joinAfterLeadingBlanks(lines[closing+1:]),
 	}, nil
 }
@@ -214,19 +204,6 @@ func checkTargetsAreKnown(targets, known []string) error {
 	for _, name := range targets {
 		if !slices.Contains(known, name) {
 			return fmt.Errorf("target %q: must be one of %s", name, strings.Join(known, ", "))
-		}
-	}
-	return nil
-}
-
-// checkIncludesAreKnown rejects a fragment this binary does not carry. Rules are
-// read from a repository and prompts are compiled in, so an include naming a
-// fragment that was renamed or never existed has to fail when the rule is loaded
-// rather than reach a model as a gap in the prompt.
-func checkIncludesAreKnown(includes []string) error {
-	for _, name := range includes {
-		if !prompts.IsKnown(name) {
-			return fmt.Errorf("include %q: must be one of %s", name, strings.Join(prompts.Known(), ", "))
 		}
 	}
 	return nil
@@ -363,7 +340,6 @@ type frontmatter struct {
 	IncludeSource bool     `yaml:"include_source"`
 	Granularity   *string  `yaml:"granularity"`
 	Targets       []string `yaml:"targets"`
-	Include       []string `yaml:"include"`
 }
 
 func isFrontmatterDelimiter(line string) bool {

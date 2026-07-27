@@ -318,28 +318,34 @@ overrules that.
 A rule's `prompt.md` is only its criterion. Everything every rule would otherwise
 repeat — what judging means, that tests come in many shapes across ecosystems and
 the behaviour is judged rather than the syntax, what a unit is, how to write a
-reason — lives in `prompts/`, embedded in the binary:
+reason — lives in `prompts/`, embedded in the binary, one folder per model call
+and one file per unit kind:
 
 ```
 prompts/
-  verdict.md                 # what a verdict is, and how to write its reason
-  enumerate.md               # how to list a file's units
-  fragments/
-    tests.md                 # what a test, a scope and a case are
-    tests.enumerate.md       # what to list and what to leave out
+  splitter/                  # the call that lists a file's units
+    instructions.md          #   the frame ahead of the file
+    task.md                  #   the call to action after it
+    function.md              #   what a function unit is
+    test_case.md             #   what a test, a scope and a case are, and how to name one
+  linter/                    # the call that judges the units
+    instructions.md          #   what a verdict is, and how to write its reason
+    task.md
+    file.md                  #   one verdict covering the whole file
+    function.md
+    test_case.md
 ```
 
-A rule names the fragments it wants and they are spliced in, generic first:
-`verdict.md` + each fragment + the rule's `prompt.md` + the units and files. A rule
-that includes nothing is told nothing about tests, which is what makes a rule about
-anything else possible.
+A prompt is those pieces joined as named sections — `<instructions>`, `<unit>`,
+`<rule>`, `<units>`, `<file>`, `<task>` — and the rule's granularity picks the
+unit kind that rides along. A rule at `file` or `function` granularity is told
+nothing about tests, which is what makes a rule about anything else possible.
 
 `prompt.md` carries YAML frontmatter and that criterion:
 
 ```markdown
 ---
 targets: [tests]
-include: [tests]
 include_source: false
 granularity: test_case
 ---
@@ -365,10 +371,6 @@ nothing, and exit `0`. So an unknown kind fails when the rule is loaded, naming 
 ones there are, before a single model call — and so does an empty list, which is a
 rule that could never run.
 
-`targets` and `include` stay separate keys even though every shipped rule sets both
-to `[tests]`. They answer different questions: a rule about comments targets `code`
-and wants no fragment at all.
-
 `include_source` and `granularity` are also what decides which properties can share
 a rule: two properties that disagree about either cannot share a verdict call
 however similar they read.
@@ -390,9 +392,10 @@ same question asked of the same unit with the same evidence in front of the mode
 | **`no-redundancy`** | `file` | `true` | no two tests assert one behaviour from one equivalence class |
 | **`no-gaps`** | `file` | `true` | every distinct outcome the code can produce is asserted |
 
-Per file, per vote: one enumeration call shared by every rule, plus one verdict call
-per rule. Seven rules cost eight calls. The three `file`-granularity rules are the
-cheap ones — `file` needs no enumeration and its schema has one key.
+Per file, per vote: one enumeration call per granularity that needs one, shared by
+every rule at that level, plus one verdict call per rule. Seven rules cost nine
+calls. The three `file`-granularity rules are the cheap ones — `file` needs no
+enumeration and its schema has one key.
 
 The cost that is not calls: a `file`-granularity failure returns one verdict and one
 sentence for a whole test file. `reasons` carries one entry per dissenting run, which
@@ -430,9 +433,8 @@ missing from the table it is a row to add, not a knob to expose.
 construct plays, never by the syntax that declares it — that is what lets one rule
 set judge every ecosystem.
 
-- **`function`** — one per named thing the file runs or declares. Which of them
-  count is the included fragments' answer, not the level's: with `include: [tests]`
-  it is each test, with nothing included it is each declaration.
+- **`function`** — one per function or method the file declares under its own
+  name.
 - **`test_case`** — one per **leaf** of that: one row of a table, one parametrised
   argument set, one subdivision declared inside the test, or the test itself when it
   has none.
@@ -530,15 +532,16 @@ with a replaced system prompt and no tools offered. Each asks for a strict
 `json_schema` format, so the reply is the structured value rather than prose to be
 salvaged.
 
-The first enumerates the units in a file. It depends on the file and nothing else —
-the rule's text never reaches it — so **a file is enumerated once however many
-rules judge it**, and the coarser levels roll up from that one list. Running seven
-rules over nine files makes nine enumeration calls, not sixty-three.
+The first — the splitter — lists the units in a file at one granularity. It
+depends on the file and the granularity and nothing else — the rule's text never
+reaches it — so **a file is enumerated once per granularity however many rules
+judge it there**. Running seven rules over nine files pays for one listing per
+file and level, not one per rule.
 
-It asks for roles rather than for syntax: the smallest thing the framework runs and
-reports under its own name, the scopes enclosing it, and the leaves it subdivides
-into. No language is named to the model, which is what lets one enumeration prompt
-serve every ecosystem.
+It asks for roles rather than for syntax: at test granularity, the smallest thing
+the framework runs and reports under its own name, the scopes enclosing it, and
+the leaves it subdivides into. No language is named to the model, which is what
+lets one splitter prompt serve every ecosystem.
 
 The second judges those units against one rule, and is handed the enumerated list
 explicitly rather than left to re-derive it. Its schema is generated per call with
@@ -567,6 +570,7 @@ which costs nothing to know and cannot be disagreed with.
 | `--effort` | — | reasoning effort; empty leaves the endpoint default |
 | `--rules` | `./rules` | directory holding one subdirectory per rule |
 | `--timeout` | `10m` | deadline for the whole run, so a hung endpoint cannot hang a commit hook |
+| `--debug` | off | print each prompt on stderr instead of calling the model — placeholder units stand in for the splitter's answer, no report is written, no endpoint is needed |
 
 `--jobs` bounds concurrency at the one seam every model call passes through, so
 fixture-level and vote-level parallelism cannot multiply into a process storm.

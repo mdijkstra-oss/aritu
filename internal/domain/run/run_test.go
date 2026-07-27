@@ -31,10 +31,6 @@ var (
 	oneReason   = rule.Rule{Name: "one-reason-to-fail", Prompt: "rule body: one reason to fail", Granularity: rule.GranularityFunction}
 	noMocking   = rule.Rule{Name: "no-mocking-under-test", Prompt: "rule body: the real unit is exercised", Granularity: rule.GranularityFunction}
 
-	// otherFragment asks the same file a different question: its prompt carries a
-	// fragment the others do not, so its enumeration is not theirs to share.
-	otherFragment = rule.Rule{Name: "prose-rule", Prompt: "rule body: the prose is legible", Granularity: rule.GranularityFunction, Include: []string{"tests"}}
-
 	// aboutDocs is about another kind of file entirely, which is what the pairing
 	// exists to keep apart from the rules about tests.
 	aboutDocs = rule.Rule{Name: "prose-is-legible", Prompt: "rule body: the document is legible", Granularity: rule.GranularityFunction, Targets: []string{"docs"}}
@@ -62,36 +58,36 @@ func TestRun(t *testing.T) {
 			rejects: map[string][]string{"named-for-behavior alpha_test.go": {"TestAlpha (port)"}},
 			want: []wantResult{
 				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 0}},
-				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
 				{rule: "named-for-behavior", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 				{rule: "one-reason-to-fail", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1, "beta_test.go": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2, "beta_test.go": 2},
 			wantJudgements:   4,
 		},
 		{
-			name:    "one enumeration serves every rule for a file even when they start together",
+			name:    "one enumeration serves every rule at a granularity even when they start together",
 			rules:   []rule.Rule{byBehaviour, oneReason, noMocking},
 			targets: []target{alpha.after(30 * time.Millisecond)},
 			votes:   1,
 			want: []wantResult{
 				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
-				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
-				{rule: "no-mocking-under-test", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
+				{rule: "no-mocking-under-test", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2},
 			wantJudgements:   3,
 		},
 		{
-			name:    "rules including different fragments each get their own enumeration",
-			rules:   []rule.Rule{oneReason, otherFragment},
+			name:    "rules at the same granularity share one enumeration",
+			rules:   []rule.Rule{oneReason, noMocking},
 			targets: []target{alpha},
 			votes:   1,
 			want: []wantResult{
-				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
-				{rule: "prose-rule", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
+				{rule: "no-mocking-under-test", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 2},
+			wantEnumerations: map[string]int{"alpha_test.go": 1},
 			wantJudgements:   2,
 		},
 		{
@@ -101,11 +97,11 @@ func TestRun(t *testing.T) {
 			votes:   1,
 			want: []wantResult{
 				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
-				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
 				{rule: "named-for-behavior", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 				{rule: "one-reason-to-fail", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1, "beta_test.go": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2, "beta_test.go": 2},
 			wantJudgements:   4,
 		},
 		{
@@ -127,15 +123,15 @@ func TestRun(t *testing.T) {
 			votes:   1,
 			want: []wantResult{
 				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
-				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha (host)": 1, "TestAlpha (port)": 1}},
 				{rule: "named-for-behavior", file: "gone_test.go", errText: "no such file"},
 				{rule: "one-reason-to-fail", file: "gone_test.go", errText: "no such file"},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2},
 			wantJudgements:   2,
 		},
 		{
-			name:    "a refused enumeration fails every rule for that file and is asked once",
+			name:    "a refused enumeration fails every rule at its granularity and is asked once there",
 			rules:   []rule.Rule{byBehaviour, oneReason},
 			targets: []target{{name: "alpha_test.go", leaves: alpha.leaves, refuses: true}, beta},
 			votes:   1,
@@ -145,7 +141,7 @@ func TestRun(t *testing.T) {
 				{rule: "named-for-behavior", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 				{rule: "one-reason-to-fail", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1, "beta_test.go": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2, "beta_test.go": 2},
 			wantJudgements:   2,
 		},
 	}
@@ -252,7 +248,7 @@ func TestRunPairsAFileOnlyWithTheRulesThatTargetIt(t *testing.T) {
 				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
 				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2},
 			wantJudgements:   2,
 		},
 		{
@@ -267,7 +263,7 @@ func TestRunPairsAFileOnlyWithTheRulesThatTargetIt(t *testing.T) {
 				{rule: "named-for-behavior", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 				{rule: "one-reason-to-fail", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1, "notes.md": 1, "beta_test.go": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2, "notes.md": 1, "beta_test.go": 2},
 			wantJudgements:   5,
 		},
 		{
@@ -281,7 +277,7 @@ func TestRunPairsAFileOnlyWithTheRulesThatTargetIt(t *testing.T) {
 				{rule: "named-for-behavior", file: "notes.md", verdicts: map[string]int{"TestBeta": 1}},
 				{rule: "prose-is-legible", file: "notes.md", verdicts: map[string]int{"TestBeta": 1}},
 			},
-			wantEnumerations: map[string]int{"alpha_test.go": 1, "notes.md": 1},
+			wantEnumerations: map[string]int{"alpha_test.go": 2, "notes.md": 2},
 			wantJudgements:   4,
 		},
 		{
@@ -819,7 +815,7 @@ type wantResult struct {
 // model answers from the table rather than from a process: a file's prompt gets
 // that file's leaves, and a verdict prompt gets one answer per unit the rule's
 // granularity derives from them. It counts what it was asked, because one
-// enumeration per file is the property the run exists to hold.
+// enumeration per file and granularity is the property the run exists to hold.
 type model struct {
 	files   []target
 	rules   []rule.Rule
@@ -873,7 +869,7 @@ func (m *model) judge(asked target, judged rule.Rule) (json.RawMessage, error) {
 
 func (m *model) fileIn(prompt string) (target, bool) {
 	for _, candidate := range m.files {
-		if strings.Contains(prompt, "=== FILE: "+candidate.path+" ===") {
+		if strings.Contains(prompt, fmt.Sprintf("path=%q", candidate.path)) {
 			return candidate, true
 		}
 	}
