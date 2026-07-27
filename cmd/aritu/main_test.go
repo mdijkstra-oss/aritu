@@ -257,15 +257,16 @@ func TestExecute(t *testing.T) {
 			wantStderr: []string{"include"},
 		},
 		{
-			name:        "what the enabled rules target supplies the sweep when no pattern is given",
+			name:        "what the enabled rules target supplies the sweep, and a rule's own fixtures are not it",
 			dir:         sweepRepo,
 			args:        []string{"apply", "--output", "json"},
 			want:        lint.ExitPass,
-			wantStdout:  []string{"alpha_test.go", "scenario_test.go"},
-			wantReports: 2,
+			wantStdout:  []string{"alpha_test.go"},
+			wantReports: 1,
+			notWantOut:  "scenario_test.go",
 		},
 		{
-			name:        "a targets block replaces the built-in answer, which is how a repository excludes its own fixtures",
+			name:        "a targets block replaces the built-in answer to which files are tests",
 			dir:         targetsRepo,
 			args:        []string{"apply", "--output", "json"},
 			want:        lint.ExitPass,
@@ -609,7 +610,10 @@ func TestFilesFor(t *testing.T) {
 	writeFile(t, filepath.Join(root, "alpha.go"), "package scenario\n")
 	writeFile(t, filepath.Join(root, "sub", "beta_test.go"), testFileBody)
 	writeFile(t, filepath.Join(root, "sub", "notes.md"), "notes\n")
+	writeFile(t, filepath.Join(root, "rules", "solo", "fixtures", "fail-only", "bad_test.go"), testFileBody)
+	writeFile(t, filepath.Join(root, "rules-of-thumb", "notes_test.go"), testFileBody)
 	at := func(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
+	rulesDir := filepath.Join(root, "rules")
 
 	tests := []struct {
 		name     string
@@ -625,32 +629,53 @@ func TestFilesFor(t *testing.T) {
 			want:     []string{at("alpha_test.go")},
 		},
 		{
-			name:     "a double star crosses directories",
+			name:     "a double star crosses directories, and reaches a fixture somebody asked for",
 			patterns: []string{at("**", "*_test.go")},
 			targeted: []string{"tests"},
-			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go")},
+			want: []string{
+				at("alpha_test.go"),
+				at("rules-of-thumb", "notes_test.go"),
+				at("rules", "solo", "fixtures", "fail-only", "bad_test.go"),
+				at("sub", "beta_test.go"),
+			},
 		},
 		{
 			name:     "overlapping patterns contribute a file once",
 			patterns: []string{at("**", "*_test.go"), at("sub", "*_test.go")},
 			targeted: []string{"tests"},
-			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go")},
+			want: []string{
+				at("alpha_test.go"),
+				at("rules-of-thumb", "notes_test.go"),
+				at("rules", "solo", "fixtures", "fail-only", "bad_test.go"),
+				at("sub", "beta_test.go"),
+			},
 		},
 		{
-			name:     "what the rules target is swept when no pattern is given",
+			name:     "what the rules target is swept when no pattern is given, the rules directory apart",
 			targeted: []string{"tests"},
-			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go")},
+			want:     []string{at("alpha_test.go"), at("rules-of-thumb", "notes_test.go"), at("sub", "beta_test.go")},
 		},
 		{
 			name:     "enabling a rule about another kind widens that sweep with no second list to edit",
 			targeted: []string{"docs", "tests"},
-			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go"), at("sub", "notes.md")},
+			want: []string{
+				at("alpha_test.go"),
+				at("rules-of-thumb", "notes_test.go"),
+				at("sub", "beta_test.go"),
+				at("sub", "notes.md"),
+			},
 		},
 		{
 			name:     "a pattern on the command line outranks what the rules target",
 			patterns: []string{at("alpha_test.go")},
 			targeted: []string{"docs"},
 			want:     []string{at("alpha_test.go")},
+		},
+		{
+			name:     "but naming a fixture is honoured, because that was asked for",
+			patterns: []string{at("rules", "solo", "fixtures", "fail-only", "bad_test.go")},
+			targeted: []string{"tests"},
+			want:     []string{at("rules", "solo", "fixtures", "fail-only", "bad_test.go")},
 		},
 		{
 			name:     "a kind matching nothing here is an empty sweep rather than a green one",
@@ -672,7 +697,7 @@ func TestFilesFor(t *testing.T) {
 				t.Fatalf("Resolve() error = %v", err)
 			}
 
-			got, err := filesFor(tc.patterns, kinds, tc.targeted)
+			got, err := filesFor(tc.patterns, kinds, tc.targeted, rulesDir)
 
 			if tc.wantErr != "" {
 				if err == nil {

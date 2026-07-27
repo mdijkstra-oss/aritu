@@ -194,9 +194,11 @@ conventions aritu ships, and quietly keeping those as a filter over your pattern
 would make the override a lie. A key nobody built in defines a new kind, which a
 rule you write can then be about.
 
-Overriding `tests` is how a repository keeps a sweep off files that are test-shaped
-but not its tests — aritu's own `aritu.yml` does exactly that, because its rule
-fixtures are bad tests on purpose.
+You do not have to override anything to keep the sweep off your own rules. Nothing
+under the rules directory is ever derived into it: what sits there is rule material
+rather than your work, and a `fail-` fixture is a bad test written on purpose, which
+`selftest` judges against the expectation its directory name carries. Name one as a
+pattern and it is still judged — that was asked for.
 
 aritu searches upward from the working directory, so running from a subdirectory
 behaves the same as running from the root, and `--config` points somewhere else

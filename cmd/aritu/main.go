@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -254,7 +255,7 @@ func applyOptions(cli *CLI) (run.Options, error) {
 	opts.Rules = rules
 	opts.IsTargeted = targetingBy(kinds, dir)
 
-	files, err := filesFor(cli.Apply.Patterns, kinds, targetedKindsOf(rules))
+	files, err := filesFor(cli.Apply.Patterns, kinds, targetedKindsOf(rules), glob.Rooted(dir, cli.Rules))
 	if err != nil {
 		return opts, err
 	}
@@ -265,19 +266,42 @@ func applyOptions(cli *CLI) (run.Options, error) {
 // filesFor expands the patterns given on the command line, falling back to every
 // file the enabled rules target. An empty sweep is an error either way: a run over
 // no files reporting green is how a hook passes because its path was wrong.
-func filesFor(patterns []string, kinds kind.Set, targeted []string) ([]string, error) {
+//
+// The derived sweep never reaches inside the rules directory. What sits there is
+// rule material rather than the repository's own work — prompts, and the fixtures
+// that prove them — and a fail- fixture is a bad test written on purpose, which
+// selftest judges against the expectation its directory name carries. A pattern
+// naming one is still honoured, because that was asked for.
+func filesFor(patterns []string, kinds kind.Set, targeted []string, rulesDir string) ([]string, error) {
 	if len(patterns) > 0 {
 		return glob.Expand(patterns)
 	}
-	files, err := kinds.Expand(targeted)
+	found, err := kinds.Expand(targeted)
 	if err != nil {
 		return nil, err
 	}
+	files := filterOutsideRules(found, rulesDir)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no targets: nothing here is %s, so name a file or glob pattern",
 			strings.Join(targeted, " or "))
 	}
 	return files, nil
+}
+
+func filterOutsideRules(files []string, rulesDir string) []string {
+	outside := make([]string, 0, len(files))
+	for _, file := range files {
+		if !isUnder(rulesDir, file) {
+			outside = append(outside, file)
+		}
+	}
+	return outside
+}
+
+// isUnder compares whole segments, so a directory whose name merely begins with the
+// rules directory's is not swept away beside it.
+func isUnder(dir, path string) bool {
+	return strings.HasPrefix(path, dir+string(filepath.Separator))
 }
 
 // kindsFor resolves the vocabulary this repository judges by. Built-in patterns
