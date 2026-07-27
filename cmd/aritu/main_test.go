@@ -332,21 +332,21 @@ func TestExecute(t *testing.T) {
 			dir:        noServiceRepo,
 			args:       []string{"rulebook"},
 			want:       lint.ExitPass,
-			wantStdout: []string{"# Coding rules", "## solo", "what complying with solo takes"},
+			wantStdout: []string{"# Coding rules", "## Solo", "A test must pin down one behaviour."},
 		},
 		{
-			name:       "rulebook carries what each rule asks for and not the criterion it judges by",
+			name:       "rulebook hands over the whole of every rule, under a heading read off its name",
 			args:       []string{"rulebook", "--rules", twoRules},
 			want:       lint.ExitPass,
-			wantStdout: []string{"## first", "## second"},
-			notWantOut: "A test must pin down one behaviour.",
+			wantStdout: []string{"## First", "## Second", "A test must pin down one behaviour."},
+			notWantOut: "## first",
 		},
 		{
 			name:       "rulebook preaches the rules that are enabled and no others",
 			args:       []string{"rulebook", "--rules", twoRules, "--rule", "second"},
 			want:       lint.ExitPass,
-			wantStdout: []string{"## second"},
-			notWantOut: "## first",
+			wantStdout: []string{"## Second"},
+			notWantOut: "## First",
 		},
 		{
 			name:       "rulebook over a rules directory holding no rules",
@@ -895,12 +895,10 @@ func writeRulesIn(t *testing.T, root string, names ...string) string {
 
 // writeRuleAbout adds one rule about the named kind of file, which is the axis
 // these tests exercise: the kind is what decides which files the rule is handed.
-// The description names the rule, so a rulebook built from several of these can be
-// checked for having reached each one rather than merely for having a heading.
 func writeRuleAbout(t *testing.T, root, name, target string) string {
 	t.Helper()
 	writeFile(t, filepath.Join(root, name, "prompt.md"),
-		fmt.Sprintf("---\ntargets: [%s]\ninclude_source: false\ngranularity: function\ndescription: what complying with %s takes\n---\nA test must pin down one behaviour.\n", target, name))
+		fmt.Sprintf("---\ntargets: [%s]\ninclude_source: false\ngranularity: function\n---\nA test must pin down one behaviour.\n", target))
 	fixture := filepath.Join(root, name, "fixtures", "pass-only")
 	writeFile(t, filepath.Join(fixture, "scenario.go"), "package scenario\n")
 	writeFile(t, filepath.Join(fixture, "scenario_test.go"), testFileBody)
@@ -1080,11 +1078,7 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 		tests = append(tests,
 			surface{
 				name: "the rule " + name,
-				text: func(t *testing.T) string { return loadRule(t, name).Prompt },
-			},
-			surface{
-				name: "the description of " + name,
-				text: func(t *testing.T) string { return loadRule(t, name).Description },
+				text: func(t *testing.T) string { return rule.Section(loadRule(t, name)) },
 			},
 		)
 	}

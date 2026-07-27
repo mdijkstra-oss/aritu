@@ -3,18 +3,6 @@ targets: [tests]
 include: [tests]
 include_source: true
 granularity: file
-description: >-
-  Before adding a test, check what the file already covers. Two tests are one when
-  the implementation cannot tell their inputs apart — the inputs land on the same
-  side of the same comparisons, take the same branches and reach the same outcome
-  by the same route — however different the two bodies read. So vary an input the
-  code actually branches on, or do not add the test: copying a case and changing a
-  constant the code never compares against buys a second name and no second case,
-  and neither does listing the same example twice in one table or restating a table
-  case as a standalone test. The reverse mistake is the more expensive one, so keep
-  what earns its place: a value at a limit and a value just past it are always two
-  cases, several rejections reached by separate conditions are several cases, and
-  the same input asserted for two different things is two tests.
 ---
 The unit here is the whole file, and the verdict is about its tests taken together rather
 than about any one of them. The file satisfies this rule when no two of its tests assert

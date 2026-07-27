@@ -3,19 +3,6 @@ targets: [tests]
 include: [tests]
 include_source: true
 granularity: file
-description: >-
-  Work outwards from the implementation rather than from the tests you feel like
-  writing. Read what the code can do and list every outcome a caller could tell
-  apart — each value returned, each distinct failure reported, each state changed,
-  each effect produced — then give every one of them an assertion that would go red
-  if the code stopped producing it. Cover both sides of every limit the code
-  compares against, since that is where off-by-one lives; cover the empty
-  collection, the absent value, zero and exactly one wherever the code branches on
-  them or returns something different for them; and cover malformed, truncated and
-  oversized input wherever the surface interprets something it did not construct
-  itself. Reaching a branch is not asserting it: if deleting what that branch does
-  would leave the file green, the outcome is still uncovered. A few well-chosen
-  cases that reach every class beat many crowded onto one.
 ---
 Every distinct outcome the implementation can produce must be asserted somewhere in this
 file. You are given the implementation as well as the tests, and the question runs from the

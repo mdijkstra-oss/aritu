@@ -3,18 +3,6 @@ targets: [tests]
 include: [tests]
 include_source: true
 granularity: test_case
-description: >-
-  Name each test for an outcome, then make its body capable of contradicting that
-  name. The name must state what the code should do, specifically enough that it
-  would have to change if the outcome changed: not the function under test, not the
-  input or the setup, and never "works", "handles it" or a ticket number. Where a
-  test declares cases, the test and its case share the work — one of the two must
-  carry the claim, so a case that only varies the input needs a test that already
-  states the behaviour. Then check the other half by asking what would happen if
-  you deleted the named behaviour from the implementation: if the test would still
-  pass, it is proving nothing. Asserting only that no error came back, or that a
-  value has its declared type, or comparing against an expected value copied out of
-  a run rather than derived from what the code should do, all leave it green.
 ---
 A unit's verdict must hang on the behaviour it is named for. Two things have to be true
 at once, and the unit fails this rule if either is missing: the name must state a

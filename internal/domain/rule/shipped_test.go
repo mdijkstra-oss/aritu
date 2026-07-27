@@ -120,9 +120,6 @@ func TestEveryShippedRuleDeclaresTheLevelAndEvidenceItsPropertyNeeds(t *testing.
 			if strings.TrimSpace(loaded.Prompt) == "" {
 				t.Error("prompt body is empty, so the rule states no criterion")
 			}
-			if strings.TrimSpace(loaded.Description) == "" {
-				t.Error("description is empty, so the rule takes a heading in the rulebook and asks for nothing under it")
-			}
 		})
 	}
 }

@@ -458,7 +458,8 @@ func TestBuildVerdictPrompt(t *testing.T) {
 		{Path: "pkg/parser.go", Content: sourceFileSource},
 	}
 	units := UnitsFor([]string{"TestParsesHost", "TestRejectsPort (empty input)"})
-	prompt := BuildVerdictPrompt([]string{"tests"}, "\n\n"+rulePrompt+"\n", files, units)
+	judged := rule.Rule{Name: "named-for-behavior", Include: []string{"tests"}, Prompt: "\n\n" + rulePrompt + "\n"}
+	prompt := BuildVerdictPrompt(judged, files, units)
 
 	t.Run("the rule follows the shared guidance and precedes the units", func(t *testing.T) {
 		shared := strings.Index(prompt, "Writing the reason")
@@ -473,6 +474,7 @@ func TestBuildVerdictPrompt(t *testing.T) {
 		name string
 		want string
 	}{
+		{"heads the rule with the same title the rulebook gives it", "## Named for behavior"},
 		{"names the key to answer under", "the key to answer under"},
 		{"judges the unit as written rather than the key", "as written on the left"},
 		{"lists the plain function unit against itself", "- TestParsesHost   ->   " + keyOf("TestParsesHost")},

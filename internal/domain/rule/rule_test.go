@@ -21,98 +21,83 @@ func TestParsePrompt(t *testing.T) {
 	}{
 		{
 			name: "include_source true",
-			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\n\nJudge the test.\n",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Description: "how to comply", Body: "Judge the test.\n"},
+			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n\nJudge the test.\n",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: "Judge the test.\n"},
 		},
 		{
 			name: "include_source false",
-			raw:  "---\ntargets: [tests]\ninclude_source: false\ngranularity: test_case\ndescription: how to comply\n---\nJudge the test.",
-			want: Prompt{IncludeSource: false, Granularity: GranularityTestCase, Targets: []string{"tests"}, Description: "how to comply", Body: "Judge the test."},
+			raw:  "---\ntargets: [tests]\ninclude_source: false\ngranularity: test_case\n---\nJudge the test.",
+			want: Prompt{IncludeSource: false, Granularity: GranularityTestCase, Targets: []string{"tests"}, Body: "Judge the test."},
 		},
 		{
 			name: "an include names a fragment the binary carries",
-			raw:  "---\ntargets: [tests]\ninclude: [tests]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Include: []string{"tests"}, Description: "how to comply", Body: "body"},
+			raw:  "---\ntargets: [tests]\ninclude: [tests]\ninclude_source: true\ngranularity: function\n---\nbody",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Include: []string{"tests"}, Body: "body"},
 		},
 		{
 			name:    "an include naming a fragment nobody wrote is refused",
-			raw:     "---\ntargets: [tests]\ninclude: [haiku]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:     "---\ntargets: [tests]\ninclude: [haiku]\ninclude_source: true\ngranularity: function\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name:    "the listing half is not includable on its own",
-			raw:     "---\ntargets: [tests]\ninclude: [tests.enumerate]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:     "---\ntargets: [tests]\ninclude: [tests.enumerate]\ninclude_source: true\ngranularity: function\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name: "a rule may target a kind that is not about tests at all",
-			raw:  "---\ntargets: [docs]\ninclude_source: false\ngranularity: file\ndescription: how to comply\n---\nbody",
-			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"docs"}, Description: "how to comply", Body: "body"},
+			raw:  "---\ntargets: [docs]\ninclude_source: false\ngranularity: file\n---\nbody",
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"docs"}, Body: "body"},
 		},
 		{
 			name: "a rule may target several kinds",
-			raw:  "---\ntargets: [code, docs]\ninclude_source: false\ngranularity: file\ndescription: how to comply\n---\nbody",
-			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"code", "docs"}, Description: "how to comply", Body: "body"},
+			raw:  "---\ntargets: [code, docs]\ninclude_source: false\ngranularity: file\n---\nbody",
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"code", "docs"}, Body: "body"},
 		},
 		{
 			name: "a kind the repository declared is targetable like a built-in one",
-			raw:  "---\ntargets: [migrations]\ninclude_source: false\ngranularity: file\ndescription: how to comply\n---\nbody",
-			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"migrations"}, Description: "how to comply", Body: "body"},
+			raw:  "---\ntargets: [migrations]\ninclude_source: false\ngranularity: file\n---\nbody",
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"migrations"}, Body: "body"},
 		},
 		{
 			name:    "missing targets key",
-			raw:     "---\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:     "---\ninclude_source: true\ngranularity: function\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name:    "targets naming a kind nobody defined",
-			raw:     "---\ntargets: [prose]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:     "---\ntargets: [prose]\ninclude_source: true\ngranularity: function\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name:    "the singular typo matches no kind and is refused rather than run over nothing",
-			raw:     "---\ntargets: [test]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:     "---\ntargets: [test]\ninclude_source: true\ngranularity: function\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name:    "an empty targets list is a rule that would never run",
-			raw:     "---\ntargets: []\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:     "---\ntargets: []\ninclude_source: true\ngranularity: function\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name:    "one unknown kind among known ones is still refused",
-			raw:     "---\ntargets: [tests, prose]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
-			wantErr: true,
-		},
-		{
-			name: "a folded description arrives as the one paragraph it renders to",
-			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: >-\n  Give every test\n  one reason to fail.\n---\nbody",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Description: "Give every test one reason to fail.", Body: "body"},
-		},
-		{
-			name:    "a description key holding nothing instructs nobody and is refused",
-			raw:     "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: \"   \"\n---\nbody",
-			wantErr: true,
-		},
-		{
-			name:    "missing description key",
-			raw:     "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\nbody",
+			raw:     "---\ntargets: [tests, prose]\ninclude_source: true\ngranularity: function\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name: "body keeps its own delimiters and blank lines",
-			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\n\n\nfirst\n\n---\nlast\n",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Description: "how to comply", Body: "first\n\n---\nlast\n"},
+			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n\n\nfirst\n\n---\nlast\n",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: "first\n\n---\nlast\n"},
 		},
 		{
 			name: "empty body",
-			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\n",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Description: "how to comply", Body: ""},
+			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: ""},
 		},
 		{
 			name: "other frontmatter keys are ignored",
-			raw:  "---\ntitle: one reason to fail\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Description: "how to comply", Body: "body"},
+			raw:  "---\ntitle: one reason to fail\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\nbody",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: "body"},
 		},
 		{
 			name:    "missing include_source key",
@@ -126,13 +111,13 @@ func TestParsePrompt(t *testing.T) {
 		},
 		{
 			name:    "granularity outside the allowed set",
-			raw:     "---\ntargets: [tests]\ninclude_source: true\ngranularity: package\ndescription: how to comply\n---\nbody",
+			raw:     "---\ntargets: [tests]\ninclude_source: true\ngranularity: package\n---\nbody",
 			wantErr: true,
 		},
 		{
 			name: "granularity file",
-			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: file\ndescription: how to comply\n---\nbody",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFile, Targets: []string{"tests"}, Description: "how to comply", Body: "body"},
+			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: file\n---\nbody",
+			want: Prompt{IncludeSource: true, Granularity: GranularityFile, Targets: []string{"tests"}, Body: "body"},
 		},
 		{
 			name:    "empty frontmatter",
@@ -186,7 +171,7 @@ func TestParsePrompt(t *testing.T) {
 // The typo case is the reason targets cannot be defaulted, and a reader who has
 // just misspelled one needs the list to compare against.
 func TestParsePromptNamesTheKindsItKnows(t *testing.T) {
-	_, err := ParsePrompt("---\ntargets: [test]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody", knownTargets)
+	_, err := ParsePrompt("---\ntargets: [test]\ninclude_source: true\ngranularity: function\n---\nbody", knownTargets)
 
 	if err == nil {
 		t.Fatal("ParsePrompt() accepted a kind nobody defined")
@@ -199,9 +184,9 @@ func TestParsePromptNamesTheKindsItKnows(t *testing.T) {
 }
 
 // TestParsePromptNamesTheKeyItIsMissing pins the diagnostic rather than the
-// refusal. Four keys are required, and a rule author who left one out learns
+// refusal. Three keys are required, and a rule author who left one out learns
 // nothing from being told the file is wrong: the message has to name which key,
-// or the fix is a search through four candidates.
+// or the fix is a search through three candidates.
 func TestParsePromptNamesTheKeyItIsMissing(t *testing.T) {
 	tests := []struct {
 		name string
@@ -210,22 +195,17 @@ func TestParsePromptNamesTheKeyItIsMissing(t *testing.T) {
 	}{
 		{
 			name: "include_source",
-			raw:  "---\ntargets: [tests]\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:  "---\ntargets: [tests]\ngranularity: function\n---\nbody",
 			want: "include_source",
 		},
 		{
 			name: "granularity",
-			raw:  "---\ntargets: [tests]\ninclude_source: true\ndescription: how to comply\n---\nbody",
+			raw:  "---\ntargets: [tests]\ninclude_source: true\n---\nbody",
 			want: "granularity",
 		},
 		{
-			name: "description",
-			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\nbody",
-			want: "description",
-		},
-		{
 			name: "targets",
-			raw:  "---\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody",
+			raw:  "---\ninclude_source: true\ngranularity: function\n---\nbody",
 			want: "targets",
 		},
 	}
@@ -434,31 +414,31 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name:  "include_source true",
-			files: map[string]string{"one-reason-to-fail/prompt.md": "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: pin down one behavior\n---\n\nOne behavior.\n"},
+			files: map[string]string{"one-reason-to-fail/prompt.md": "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n\nOne behavior.\n"},
 			rule:  "one-reason-to-fail",
-			want:  Rule{Name: "one-reason-to-fail", Prompt: "One behavior.\n", Description: "pin down one behavior", Targets: []string{"tests"}, IncludeSource: true, Granularity: GranularityFunction},
+			want:  Rule{Name: "one-reason-to-fail", Prompt: "One behavior.\n", Targets: []string{"tests"}, IncludeSource: true, Granularity: GranularityFunction},
 		},
 		{
 			name:  "include_source false",
-			files: map[string]string{"named-for-behavior/prompt.md": "---\ntargets: [tests]\ninclude_source: false\ngranularity: test_case\ndescription: name it for an outcome\n---\nName it.\n"},
+			files: map[string]string{"named-for-behavior/prompt.md": "---\ntargets: [tests]\ninclude_source: false\ngranularity: test_case\n---\nName it.\n"},
 			rule:  "named-for-behavior",
-			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", Description: "name it for an outcome", Targets: []string{"tests"}, IncludeSource: false, Granularity: GranularityTestCase},
+			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", Targets: []string{"tests"}, IncludeSource: false, Granularity: GranularityTestCase},
 		},
 		{
 			name:  "a rule about a kind that is not tests loads the same way",
-			files: map[string]string{"prose-is-legible/prompt.md": "---\ntargets: [docs]\ninclude_source: false\ngranularity: file\ndescription: write prose a stranger can read\n---\nRead it.\n"},
+			files: map[string]string{"prose-is-legible/prompt.md": "---\ntargets: [docs]\ninclude_source: false\ngranularity: file\n---\nRead it.\n"},
 			rule:  "prose-is-legible",
-			want:  Rule{Name: "prose-is-legible", Prompt: "Read it.\n", Description: "write prose a stranger can read", Targets: []string{"docs"}, IncludeSource: false, Granularity: GranularityFile},
+			want:  Rule{Name: "prose-is-legible", Prompt: "Read it.\n", Targets: []string{"docs"}, IncludeSource: false, Granularity: GranularityFile},
 		},
 		{
 			name:    "a rule targeting a kind this repository never defined",
-			files:   map[string]string{"prose-is-legible/prompt.md": "---\ntargets: [prose]\ninclude_source: false\ngranularity: file\ndescription: how to comply\n---\nbody"},
+			files:   map[string]string{"prose-is-legible/prompt.md": "---\ntargets: [prose]\ninclude_source: false\ngranularity: file\n---\nbody"},
 			rule:    "prose-is-legible",
 			wantErr: true,
 		},
 		{
 			name:    "missing rule directory",
-			files:   map[string]string{"other/prompt.md": "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody"},
+			files:   map[string]string{"other/prompt.md": "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\nbody"},
 			rule:    "absent",
 			wantErr: true,
 		},
@@ -496,7 +476,7 @@ func TestLoad(t *testing.T) {
 }
 
 func TestLoadFixtures(t *testing.T) {
-	const prompt = "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\ndescription: how to comply\n---\nbody\n"
+	const prompt = "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\nbody\n"
 
 	type wantFixture struct {
 		name     string
@@ -700,7 +680,7 @@ func TestList(t *testing.T) {
 // outranks what was derived, the same way a pattern naming a fixture judges it.
 func TestLoadReachesAParkedRuleThatIsNamed(t *testing.T) {
 	root := writeTree(t, map[string]string{
-		"_parked/prompt.md": "---\ntargets: [tests]\ninclude_source: false\ngranularity: file\ndescription: how to comply\n---\nbody",
+		"_parked/prompt.md": "---\ntargets: [tests]\ninclude_source: false\ngranularity: file\n---\nbody",
 	})
 
 	loaded, err := Load(root, "_parked", knownTargets)

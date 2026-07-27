@@ -3,19 +3,6 @@ targets: [tests]
 include: [tests]
 include_source: false
 granularity: function
-description: >-
-  Write each test so that a stranger reading it once can say what it establishes,
-  what produces that outcome, and — when it goes red — what broke. Keep the
-  deciding input and the expected value in view beside the act rather than buried
-  in a distant fixture, a default the test never restates or the middle of a long
-  literal. Build only what the act consumes, an assertion inspects or a constructor
-  demands, because every line of setup a reader has to consider and then discard
-  claimed to matter and did not. Name any helper for what it builds or what it
-  checks, never `setup` or `run`. Where one comparison stands in for many inputs,
-  carry each case's identity into the failure: either run each case as its own
-  reported unit, or put its label or its input into what the failing comparison
-  emits. And never join several outcomes into one condition and assert that once —
-  the reader needs to know which of them broke.
 ---
 A test is read far more often than it is written, and almost always by someone who was
 not there when it was written. That reader must be able to answer three questions:

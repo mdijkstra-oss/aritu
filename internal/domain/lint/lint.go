@@ -202,7 +202,12 @@ func BuildNamesPrompt(granularity rule.Granularity, includes []string, source So
 // re-derived: two independent enumerations of twenty-five table rows will phrase one
 // of them differently sooner or later, and every such disagreement would surface as
 // a could-not-run.
-func BuildVerdictPrompt(includes []string, rulePrompt string, files []SourceFile, units []Unit) string {
+//
+// The rule reaches the model as rule.Section renders it, which is the same block
+// the rulebook hands a writer, heading and all. Judging against a differently
+// worded copy of the standard somebody was given is how a rule ends up meaning two
+// things, so there is only ever the one rendering.
+func BuildVerdictPrompt(judged rule.Rule, files []SourceFile, units []Unit) string {
 	var listed strings.Builder
 	for _, unit := range units {
 		fmt.Fprintf(&listed, "- %s   ->   %s\n", unit.Name, unit.Key)
@@ -212,7 +217,7 @@ func BuildVerdictPrompt(includes []string, rulePrompt string, files []SourceFile
 		sources.WriteString(formatFileBlock(f))
 		sources.WriteString("\n")
 	}
-	return prompts.Verdict(includes, rulePrompt, listed.String(), sources.String())
+	return prompts.Verdict(judged.Include, rule.Section(judged), listed.String(), sources.String())
 }
 
 type namesReply struct {
@@ -282,7 +287,7 @@ func askNames(ctx context.Context, ask service.Ask, opts Options, test SourceFil
 
 func askVerdicts(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
 	raw, err := ask(ctx, service.Request{
-		Prompt: BuildVerdictPrompt(opts.Rule.Include, opts.Rule.Prompt, files, units),
+		Prompt: BuildVerdictPrompt(opts.Rule, files, units),
 		Model:  opts.Model,
 		Effort: opts.Effort,
 		Schema: VerdictSchemaFor(units),

@@ -3,18 +3,6 @@ targets: [tests]
 include: [tests]
 include_source: false
 granularity: file
-description: >-
-  Create the state your test uses, and never depend on state you did not create.
-  Build the subject fresh for each test, make the directory you write into, insert
-  the record you then read, hand in a fixed instant where the code would otherwise
-  read the clock, seed anything that would otherwise be random, and start the
-  server you talk to so you can learn its address from what you started. Give
-  anything in a shared namespace a name that cannot collide, rather than a port or
-  a filename you picked by hand. Restore whatever ambient setting you change,
-  however the test ends. Never read a path you did not write, never leave a
-  variable at file scope for tests to assign to, and never let one test rely on
-  another having run first — the suite has to give the same answer on a
-  colleague's machine, in reverse order, and two copies at once.
 ---
 A suite must produce the same verdict on any machine, in any order, at any time. Run these
 tests on a colleague's laptop, run them in reverse, run two copies of the file at once, run
