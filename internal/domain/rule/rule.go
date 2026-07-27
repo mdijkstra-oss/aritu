@@ -34,11 +34,12 @@ type Expectation int
 // decreases as the level gets finer.
 type Granularity int
 
-// Fixture is one scenario directory exercising a rule.
+// Fixture is one scenario directory exercising a rule. File is the file its
+// expectation applies to.
 type Fixture struct {
-	Name     string
-	TestFile string
-	Expect   Expectation
+	Name   string
+	File   string
+	Expect Expectation
 }
 
 // Prompt is a parsed prompt.md: its frontmatter settings and its body.
@@ -314,32 +315,48 @@ func loadFixture(fixturesDir, name string) (Fixture, error) {
 		return Fixture{}, err
 	}
 	dir := filepath.Join(fixturesDir, name)
-	testFile, err := findTestFile(dir)
+	file, err := findFixtureFile(dir)
 	if err != nil {
 		return Fixture{}, err
 	}
-	return Fixture{Name: name, TestFile: testFile, Expect: expect}, nil
+	return Fixture{Name: name, File: file, Expect: expect}, nil
 }
 
-// findTestFile insists on exactly one test file per fixture directory, whatever
-// the language. One is what makes a fixture unambiguous: two would leave which
-// file the expectation applies to undecided.
-func findTestFile(dir string) (string, error) {
+// findFixtureFile picks the file a fixture's expectation applies to, whatever the
+// language. A test file wins when the directory holds exactly one — a rule that
+// pairs a test with its implementation keeps both in the fixture, and the test is
+// the judged half — and a directory with no test file offers exactly one plain
+// source file instead, which is what a fixture for a rule about ordinary code
+// holds. Either way exactly one file qualifies: two would leave which of them the
+// expectation applies to undecided.
+func findFixtureFile(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", err
 	}
-	found := make([]string, 0, 1)
+	tests := make([]string, 0, 1)
+	sources := make([]string, 0, 1)
 	for _, entry := range entries {
-		if entry.IsDir() || !testpath.IsTestFile(entry.Name()) {
+		if entry.IsDir() || !isSourceFile(entry.Name()) {
 			continue
 		}
-		found = append(found, filepath.Join(dir, entry.Name()))
+		if testpath.IsTestFile(entry.Name()) {
+			tests = append(tests, filepath.Join(dir, entry.Name()))
+			continue
+		}
+		sources = append(sources, filepath.Join(dir, entry.Name()))
 	}
-	if len(found) != 1 {
-		return "", fmt.Errorf("fixture %s: want exactly one test file, found %d", dir, len(found))
+	if len(tests) == 1 {
+		return tests[0], nil
 	}
-	return found[0], nil
+	if len(tests) == 0 && len(sources) == 1 {
+		return sources[0], nil
+	}
+	return "", fmt.Errorf("fixture %s: want exactly one test file, or exactly one source file and no test file, found %d test and %d source files", dir, len(tests), len(sources))
+}
+
+func isSourceFile(name string) bool {
+	return slices.Contains(testpath.Extensions(), filepath.Ext(name))
 }
 
 type frontmatter struct {

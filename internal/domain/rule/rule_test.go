@@ -474,9 +474,9 @@ func TestLoadFixtures(t *testing.T) {
 	const prompt = "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\nbody\n"
 
 	type wantFixture struct {
-		name     string
-		testFile string
-		expect   Expectation
+		name   string
+		file   string
+		expect Expectation
 	}
 
 	tests := []struct {
@@ -494,9 +494,9 @@ func TestLoadFixtures(t *testing.T) {
 				"r/fixtures/pass-double/other_test.go":    "package scenario",
 			},
 			want: []wantFixture{
-				{name: "fail-two", testFile: "scenario_test.go", expect: ExpectFail},
-				{name: "pass-double", testFile: "other_test.go", expect: ExpectPass},
-				{name: "pass-single", testFile: "scenario_test.go", expect: ExpectPass},
+				{name: "fail-two", file: "scenario_test.go", expect: ExpectFail},
+				{name: "pass-double", file: "other_test.go", expect: ExpectPass},
+				{name: "pass-single", file: "scenario_test.go", expect: ExpectPass},
 			},
 		},
 		{
@@ -510,7 +510,7 @@ func TestLoadFixtures(t *testing.T) {
 				"r/fixtures/pass-with-source/sub/README": "notes",
 			},
 			want: []wantFixture{
-				{name: "pass-with-source", testFile: "a_test.go", expect: ExpectPass},
+				{name: "pass-with-source", file: "a_test.go", expect: ExpectPass},
 			},
 		},
 		{
@@ -521,14 +521,34 @@ func TestLoadFixtures(t *testing.T) {
 				"r/fixtures/pass-a/a_test.go": "package scenario",
 			},
 			want: []wantFixture{
-				{name: "pass-a", testFile: "a_test.go", expect: ExpectPass},
+				{name: "pass-a", file: "a_test.go", expect: ExpectPass},
 			},
 		},
 		{
-			name: "no test file in fixture",
+			name: "a lone source file is the fixture file",
+			files: map[string]string{
+				"r/prompt.md":                 prompt,
+				"r/fixtures/pass-a/a.go":      "package scenario",
+				"r/fixtures/pass-a/README.md": "notes",
+			},
+			want: []wantFixture{
+				{name: "pass-a", file: "a.go", expect: ExpectPass},
+			},
+		},
+		{
+			name: "two source files without a test file",
 			files: map[string]string{
 				"r/prompt.md":            prompt,
 				"r/fixtures/pass-a/a.go": "package scenario",
+				"r/fixtures/pass-a/b.go": "package scenario",
+			},
+			wantErr: true,
+		},
+		{
+			name: "no judgeable file in fixture",
+			files: map[string]string{
+				"r/prompt.md":                 prompt,
+				"r/fixtures/pass-a/README.md": "notes",
 			},
 			wantErr: true,
 		},
@@ -548,6 +568,17 @@ func TestLoadFixtures(t *testing.T) {
 				"r/fixtures/single/a_test.go": "package scenario",
 			},
 			wantErr: true,
+		},
+		{
+			name: "test file wins over a source file beside it",
+			files: map[string]string{
+				"r/prompt.md":                 prompt,
+				"r/fixtures/pass-a/a.go":      "package scenario",
+				"r/fixtures/pass-a/a_test.go": "package scenario",
+			},
+			want: []wantFixture{
+				{name: "pass-a", file: "a_test.go", expect: ExpectPass},
+			},
 		},
 		{
 			name: "no fixture directories",
@@ -584,9 +615,9 @@ func TestLoadFixtures(t *testing.T) {
 			for i, want := range tt.want {
 				dir := filepath.Join(loaded.Dir, "fixtures", want.name)
 				expected := Fixture{
-					Name:     want.name,
-					TestFile: filepath.Join(dir, want.testFile),
-					Expect:   want.expect,
+					Name:   want.name,
+					File:   filepath.Join(dir, want.file),
+					Expect: want.expect,
 				}
 				if got[i] != expected {
 					t.Errorf("fixture %d = %#v, want %#v", i, got[i], expected)

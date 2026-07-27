@@ -117,7 +117,7 @@ func judge(ctx context.Context, ask service.Ask, opts Options, fixture rule.Fixt
 	started := time.Now()
 	report, err := lint.Apply(ctx, ask, lint.Options{
 		Rule:   opts.Rule,
-		File:   fixture.TestFile,
+		File:   fixture.File,
 		Votes:  opts.Votes,
 		Model:  opts.Model,
 		Effort: opts.Effort,

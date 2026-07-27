@@ -192,9 +192,9 @@ func TestRun(t *testing.T) {
 	fixtures := []rule.Fixture{
 		writeFixture(t, root, "pass-good", rule.ExpectPass, "TestGood"),
 		{
-			Name:     "pass-unreadable",
-			TestFile: filepath.Join(root, "pass-unreadable", "scenario_test.go"),
-			Expect:   rule.ExpectPass,
+			Name:   "pass-unreadable",
+			File:   filepath.Join(root, "pass-unreadable", "scenario_test.go"),
+			Expect: rule.ExpectPass,
 		},
 		writeFixture(t, root, "fail-bad", rule.ExpectFail, "TestBad"),
 	}
@@ -241,8 +241,8 @@ func TestRun(t *testing.T) {
 			if got.Held != tc.held {
 				t.Fatalf("Held = %t, want %t", got.Held, tc.held)
 			}
-			if got.Report.Rule != opts.Rule.Name || got.Report.File != fixtures[i].TestFile || got.Report.Votes != opts.Votes {
-				t.Fatalf("report = %+v, want rule %q file %q votes %d", got.Report, opts.Rule.Name, fixtures[i].TestFile, opts.Votes)
+			if got.Report.Rule != opts.Rule.Name || got.Report.File != fixtures[i].File || got.Report.Votes != opts.Votes {
+				t.Fatalf("report = %+v, want rule %q file %q votes %d", got.Report, opts.Rule.Name, fixtures[i].File, opts.Votes)
 			}
 			if !tc.wantErr && !maps.Equal(got.Report.Verdicts, tc.verdicts) {
 				t.Fatalf("Verdicts = %v, want %v", got.Report.Verdicts, tc.verdicts)
@@ -270,7 +270,7 @@ func writeFixture(t *testing.T, root, name string, expect rule.Expectation, test
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
-	return rule.Fixture{Name: name, TestFile: path, Expect: expect}
+	return rule.Fixture{Name: name, File: path, Expect: expect}
 }
 
 type reply struct {
