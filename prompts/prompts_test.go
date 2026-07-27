@@ -60,7 +60,7 @@ func TestNoPromptCarriesARuleItWasNotGiven(t *testing.T) {
 	}
 }
 
-func TestARenderedPromptNeverReachesTheModelWithBraces(t *testing.T) {
+func TestEveryPlaceholderAShippedPromptCarriesIsFilled(t *testing.T) {
 	tests := []struct {
 		name     string
 		rendered string
@@ -78,7 +78,49 @@ func TestARenderedPromptNeverReachesTheModelWithBraces(t *testing.T) {
 	}
 }
 
-func TestRenderPanicsOnAPlaceholderNobodyFilled(t *testing.T) {
+// TestBracesInTheSourceAreCodeRatherThanPlaceholders covers the input that killed
+// a whole sweep: a source file is substituted into the prompt, so scanning the
+// result for braces made []Param{{...}} — ordinary Go, and Handlebars, and a Go
+// template — panic the process mid-run rather than be judged.
+func TestBracesInTheSourceAreCodeRatherThanPlaceholders(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		wantKept string
+	}{
+		{
+			name:     "a slice of structs",
+			source:   `Params: []Param{{Name: "charset"}},`,
+			wantKept: `[]Param{{Name: "charset"}}`,
+		},
+		{
+			name:     "a name that looks like a placeholder nobody supplied",
+			source:   "greeting := `{{unfilled}}`",
+			wantKept: "{{unfilled}}",
+		},
+		{
+			name:     "an opening brace the source never closes",
+			source:   "left := `{{`",
+			wantKept: "{{",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for label, rendered := range map[string]func() string{
+				"verdict":   func() string { return Verdict("a rule", "a unit", tc.source) },
+				"enumerate": func() string { return Enumerate(tc.source) },
+			} {
+				out := rendered()
+				if !strings.Contains(out, tc.wantKept) {
+					t.Errorf("the %s prompt dropped %q from the source it was given", label, tc.wantKept)
+				}
+			}
+		})
+	}
+}
+
+func TestRenderPanicsOnAPlaceholderTheTemplateCarriesAndNobodyFilled(t *testing.T) {
 	defer func() {
 		if recover() == nil {
 			t.Error("render did not panic on an unfilled placeholder, so braces would reach the model")

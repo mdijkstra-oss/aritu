@@ -48,18 +48,47 @@ const (
 	unitEnumerationFile = "units/tests-enumerate.md"
 )
 
-// render substitutes every {{name}} in a template. A placeholder the caller did not
-// supply, or a value carrying a placeholder of its own, would both put braces in
-// front of the model, so neither is tolerated.
+// render substitutes every {{name}} in a template. What is checked for a
+// placeholder nobody supplied is the template, never the result: the values carry
+// source code, and a file holding braces of its own — a Go composite literal such
+// as []Param{{...}}, a Handlebars view, a Go template — is the ordinary input this
+// tool exists to read rather than a prompt this package failed to fill.
 func render(name string, values map[string]string) string {
-	rendered := read(name)
+	template := read(name)
+	if unfilled, hasUnfilled := findUnfilled(template, values); hasUnfilled {
+		panic(fmt.Sprintf("prompt %s leaves %s unfilled", name, unfilled))
+	}
+	rendered := template
 	for key, value := range values {
 		rendered = strings.ReplaceAll(rendered, "{{"+key+"}}", value)
 	}
-	if at := strings.Index(rendered, "{{"); at >= 0 {
-		panic(fmt.Sprintf("prompt %s left the placeholder at offset %d unfilled", name, at))
-	}
 	return rendered
+}
+
+// findUnfilled reports the first placeholder the template carries that no value
+// answers, so a typo in a template is still caught before the braces reach a model.
+// An opening brace the template never closes counts as one.
+func findUnfilled(template string, values map[string]string) (string, bool) {
+	for rest := template; ; {
+		opened := strings.Index(rest, "{{")
+		if opened < 0 {
+			return "", false
+		}
+		rest = rest[opened+2:]
+		closed := strings.Index(rest, "}}")
+		if closed < 0 {
+			return "{{", true
+		}
+		if key := rest[:closed]; !isSupplied(key, values) {
+			return "{{" + key + "}}", true
+		}
+		rest = rest[closed+2:]
+	}
+}
+
+func isSupplied(key string, values map[string]string) bool {
+	_, supplied := values[key]
+	return supplied
 }
 
 // read panics because the templates are embedded: a name that does not resolve is a
