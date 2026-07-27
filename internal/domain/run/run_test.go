@@ -34,6 +34,10 @@ var (
 	// otherFragment asks the same file a different question: its prompt carries a
 	// fragment the others do not, so its enumeration is not theirs to share.
 	otherFragment = rule.Rule{Name: "prose-rule", Prompt: "rule body: the prose is legible", Granularity: rule.GranularityFunction, Include: []string{"tests"}}
+
+	// aboutDocs is about another kind of file entirely, which is what the pairing
+	// exists to keep apart from the rules about tests.
+	aboutDocs = rule.Rule{Name: "prose-is-legible", Prompt: "rule body: the document is legible", Granularity: rule.GranularityFunction, Targets: []string{"docs"}}
 )
 
 func TestRun(t *testing.T) {
@@ -207,6 +211,115 @@ func checkErrored(t *testing.T, got Result, errText string) {
 		t.Errorf("%s over %s: report carries %q, want the error so it still prints",
 			got.Report.Rule, filepath.Base(got.Report.File), got.Report.Error)
 	}
+}
+
+// TestRunPairsAFileOnlyWithTheRulesThatTargetIt pins what the cross product became.
+// A rule and a file it says nothing about form no target at all: no call is spent
+// on it and no verdict is reported for it, which is what makes a rule about
+// something other than tests runnable beside one about tests.
+func TestRunPairsAFileOnlyWithTheRulesThatTargetIt(t *testing.T) {
+	alpha := target{name: "alpha_test.go", leaves: []string{"TestAlpha"}}
+	beta := target{name: "beta_test.go", leaves: []string{"TestBeta"}}
+	notes := target{name: "notes.md", leaves: []string{"TestBeta"}}
+
+	tests := []struct {
+		name             string
+		rules            []rule.Rule
+		targets          []target
+		isTargeted       func(rule.Rule, string) bool
+		want             []wantResult
+		wantEnumerations map[string]int
+		wantJudgements   int
+	}{
+		{
+			name:       "each file is handed only to the rule whose kind it is of",
+			rules:      []rule.Rule{byBehaviour, aboutDocs},
+			targets:    []target{alpha, notes},
+			isTargeted: byExtension,
+			want: []wantResult{
+				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "prose-is-legible", file: "notes.md", verdicts: map[string]int{"TestBeta": 1}},
+			},
+			wantEnumerations: map[string]int{"alpha_test.go": 1, "notes.md": 1},
+			wantJudgements:   2,
+		},
+		{
+			name:       "a file no rule targets costs no call and yields no result",
+			rules:      []rule.Rule{byBehaviour, oneReason},
+			targets:    []target{alpha, notes},
+			isTargeted: byExtension,
+			want: []wantResult{
+				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+			},
+			wantEnumerations: map[string]int{"alpha_test.go": 1},
+			wantJudgements:   2,
+		},
+		{
+			name:       "the holes close up and the surviving pairs keep file then rule order",
+			rules:      []rule.Rule{byBehaviour, aboutDocs, oneReason},
+			targets:    []target{alpha, notes, beta},
+			isTargeted: byExtension,
+			want: []wantResult{
+				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "prose-is-legible", file: "notes.md", verdicts: map[string]int{"TestBeta": 1}},
+				{rule: "named-for-behavior", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
+				{rule: "one-reason-to-fail", file: "beta_test.go", verdicts: map[string]int{"TestBeta": 1}},
+			},
+			wantEnumerations: map[string]int{"alpha_test.go": 1, "notes.md": 1, "beta_test.go": 1},
+			wantJudgements:   5,
+		},
+		{
+			name:       "a run naming no predicate pairs everything, as a caller handing over two lists means",
+			rules:      []rule.Rule{byBehaviour, aboutDocs},
+			targets:    []target{alpha, notes},
+			isTargeted: nil,
+			want: []wantResult{
+				{rule: "named-for-behavior", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "prose-is-legible", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "named-for-behavior", file: "notes.md", verdicts: map[string]int{"TestBeta": 1}},
+				{rule: "prose-is-legible", file: "notes.md", verdicts: map[string]int{"TestBeta": 1}},
+			},
+			wantEnumerations: map[string]int{"alpha_test.go": 1, "notes.md": 1},
+			wantJudgements:   4,
+		},
+		{
+			name:       "a run where no pair survives judges nothing rather than everything",
+			rules:      []rule.Rule{aboutDocs},
+			targets:    []target{alpha, beta},
+			isTargeted: byExtension,
+			want:       nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := writeCorpus(t, tc.targets)
+			table := &model{files: answers, rules: tc.rules, enumerations: map[string]int{}}
+			opts := Options{
+				Rules: tc.rules, Files: pathsOf(answers), Votes: 1, Model: "sonnet",
+				IsTargeted: tc.isTargeted,
+			}
+
+			results := Run(context.Background(), table.ask, opts)
+
+			checkResults(t, results, tc.want)
+			if !maps.Equal(table.enumerationCounts(), tc.wantEnumerations) {
+				t.Errorf("enumerations = %v, want %v", table.enumerationCounts(), tc.wantEnumerations)
+			}
+			if got := table.judgementCount(); got != tc.wantJudgements {
+				t.Errorf("verdict calls = %d, want %d", got, tc.wantJudgements)
+			}
+		})
+	}
+}
+
+// byExtension stands in for the kinds a repository resolved: a rule about docs is
+// handed markdown and a rule about tests is handed the rest.
+func byExtension(judged rule.Rule, file string) bool {
+	isDoc := filepath.Ext(file) == ".md"
+	return isDoc == slices.Contains(judged.Targets, "docs")
 }
 
 func TestRunJudgesAFileGranularityRuleWithoutEnumerating(t *testing.T) {

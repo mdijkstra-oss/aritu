@@ -15,24 +15,30 @@ import (
 // granularity flipped by hand are all invisible to a test over synthetic input.
 var shippedRulesDir = filepath.Join("..", "..", "..", "rules")
 
-// shippedRules is the set the feature defines, with the pairing each rule is
-// judged at and the fragments its prompt carries. Every key is load-bearing: two properties that disagree about
-// either cannot share a verdict call, so a flipped value silently changes what
-// the model is asked and what it can see.
+// shippedRules is the set the feature defines, with the files each rule is about,
+// the pairing it is judged at and the fragments its prompt carries. Every key is
+// load-bearing: two properties that disagree about any of them cannot share a
+// verdict call, so a flipped value silently changes which files reach the model,
+// what it is asked, and what it can see.
 var shippedRules = []struct {
 	name          string
+	targets       []string
 	granularity   rule.Granularity
 	includeSource bool
 	include       []string
 }{
-	{name: "no-gaps", granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
-	{name: "no-redundancy", granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
-	{name: "proves-what-it-claims", granularity: rule.GranularityTestCase, includeSource: true, include: []string{"tests"}},
-	{name: "readable", granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
-	{name: "self-contained", granularity: rule.GranularityFile, includeSource: false, include: []string{"tests"}},
-	{name: "tests-behavior-not-implementation", granularity: rule.GranularityFunction, includeSource: true, include: []string{"tests"}},
-	{name: "tests-one-thing", granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
+	{name: "no-gaps", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
+	{name: "no-redundancy", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
+	{name: "proves-what-it-claims", targets: []string{"tests"}, granularity: rule.GranularityTestCase, includeSource: true, include: []string{"tests"}},
+	{name: "readable", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
+	{name: "self-contained", targets: []string{"tests"}, granularity: rule.GranularityFile, includeSource: false, include: []string{"tests"}},
+	{name: "tests-behavior-not-implementation", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: true, include: []string{"tests"}},
+	{name: "tests-one-thing", targets: []string{"tests"}, granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
 }
+
+// knownTargets is what a repository running the shipped set would have resolved
+// before reading any of it: the built-in kinds, which are all these rules name.
+var knownTargets = []string{"code", "docs", "tests"}
 
 // requiredFixtureLanguages is the coverage floor. A prompt that passes its fixtures
 // in one language and nothing else is a prompt describing that language's shapes,
@@ -63,11 +69,14 @@ func TestTheShippedRuleSetIsTheSevenGroupedRules(t *testing.T) {
 func TestEveryShippedRuleDeclaresTheLevelAndEvidenceItsPropertyNeeds(t *testing.T) {
 	for _, shipped := range shippedRules {
 		t.Run(shipped.name, func(t *testing.T) {
-			loaded, err := rule.Load(shippedRulesDir, shipped.name)
+			loaded, err := rule.Load(shippedRulesDir, shipped.name, knownTargets)
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
 
+			if !slices.Equal(loaded.Targets, shipped.targets) {
+				t.Errorf("targets = %v, want %v", loaded.Targets, shipped.targets)
+			}
 			if loaded.Granularity != shipped.granularity {
 				t.Errorf("granularity = %s, want %s", loaded.Granularity, shipped.granularity)
 			}
@@ -87,7 +96,7 @@ func TestEveryShippedRuleDeclaresTheLevelAndEvidenceItsPropertyNeeds(t *testing.
 func TestEveryShippedRuleProvesItselfInEveryLanguage(t *testing.T) {
 	for _, shipped := range shippedRules {
 		t.Run(shipped.name, func(t *testing.T) {
-			loaded, err := rule.Load(shippedRulesDir, shipped.name)
+			loaded, err := rule.Load(shippedRulesDir, shipped.name, knownTargets)
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}

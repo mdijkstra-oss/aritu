@@ -20,6 +20,7 @@ type Rule struct {
 	Name          string
 	Dir           string
 	Prompt        string
+	Targets       []string
 	Include       []string
 	IncludeSource bool
 	Granularity   Granularity
@@ -44,6 +45,7 @@ type Fixture struct {
 type Prompt struct {
 	IncludeSource bool
 	Granularity   Granularity
+	Targets       []string
 	Include       []string
 	Body          string
 }
@@ -65,14 +67,16 @@ const (
 	GranularityTestCase
 )
 
-// Load reads <rulesDir>/<name>/prompt.md.
-func Load(rulesDir, name string) (Rule, error) {
+// Load reads <rulesDir>/<name>/prompt.md. The kinds of file a rule may target are
+// passed in rather than compiled in like the fragments: a repository's config
+// extends that vocabulary, so it is only known once aritu.yml has been read.
+func Load(rulesDir, name string, knownTargets []string) (Rule, error) {
 	dir := filepath.Join(rulesDir, name)
 	raw, err := os.ReadFile(filepath.Join(dir, promptFileName))
 	if err != nil {
 		return Rule{}, fmt.Errorf("rule %q: %w", name, err)
 	}
-	prompt, err := ParsePrompt(string(raw))
+	prompt, err := ParsePrompt(string(raw), knownTargets)
 	if err != nil {
 		return Rule{}, fmt.Errorf("rule %q: %w", name, err)
 	}
@@ -80,6 +84,7 @@ func Load(rulesDir, name string) (Rule, error) {
 		Name:          name,
 		Dir:           dir,
 		Prompt:        prompt.Body,
+		Targets:       prompt.Targets,
 		Include:       prompt.Include,
 		IncludeSource: prompt.IncludeSource,
 		Granularity:   prompt.Granularity,
@@ -131,9 +136,10 @@ func LoadFixtures(r Rule) ([]Fixture, error) {
 }
 
 // ParsePrompt splits a prompt.md into frontmatter and body. A missing
-// include_source key is an error: defaulting it silently would change which
-// files reach the model without anyone noticing.
-func ParsePrompt(raw string) (Prompt, error) {
+// include_source, granularity or targets key is an error: defaulting any of them
+// silently would change which files reach the model, or what it is asked about
+// them, without anyone noticing.
+func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	lines := strings.Split(raw, "\n")
 	if len(lines) == 0 || !isFrontmatterDelimiter(lines[0]) {
 		return Prompt{}, errors.New("prompt.md: missing frontmatter, first line must be ---")
@@ -157,12 +163,16 @@ func ParsePrompt(raw string) (Prompt, error) {
 	if err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
 	}
+	if err := checkTargetsAreKnown(front.Targets, knownTargets); err != nil {
+		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
+	}
 	if err := checkIncludesAreKnown(front.Include); err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
 	}
 	return Prompt{
 		IncludeSource: *front.IncludeSource,
 		Granularity:   granularity,
+		Targets:       front.Targets,
 		Include:       front.Include,
 		Body:          joinAfterLeadingBlanks(lines[closing+1:]),
 	}, nil
@@ -175,6 +185,22 @@ func ParseGranularity(name string) (Granularity, error) {
 		return 0, fmt.Errorf("granularity %q: must be file, function or test_case", name)
 	}
 	return granularity, nil
+}
+
+// checkTargetsAreKnown rejects a rule that is about no kind of file, or about one
+// this repository has no answer for. Neither can be defaulted or skipped: a rule
+// targeting nothing is handed no file, and a misspelled kind matches none, and both
+// of those run nothing and report green.
+func checkTargetsAreKnown(targets, known []string) error {
+	if len(targets) == 0 {
+		return fmt.Errorf("frontmatter must set targets: one or more of %s", strings.Join(known, ", "))
+	}
+	for _, name := range targets {
+		if !slices.Contains(known, name) {
+			return fmt.Errorf("target %q: must be one of %s", name, strings.Join(known, ", "))
+		}
+	}
+	return nil
 }
 
 // checkIncludesAreKnown rejects a fragment this binary does not carry. Rules are
@@ -303,6 +329,7 @@ func findTestFile(dir string) (string, error) {
 type frontmatter struct {
 	IncludeSource *bool    `yaml:"include_source"`
 	Granularity   *string  `yaml:"granularity"`
+	Targets       []string `yaml:"targets"`
 	Include       []string `yaml:"include"`
 }
 

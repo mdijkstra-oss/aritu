@@ -20,6 +20,7 @@ import (
 	"github.com/matthijn/aritu/internal/domain/selftest"
 	"github.com/matthijn/aritu/internal/lib/claudecli"
 	"github.com/matthijn/aritu/internal/lib/glob"
+	"github.com/matthijn/aritu/internal/lib/kind"
 )
 
 func main() {
@@ -43,15 +44,16 @@ type CLI struct {
 	Apply    ApplyCmd      `cmd:"" help:"Judge files against rules."`
 	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
 
-	// Loaded is aritu.yml as read during the parse. Its include patterns and its
+	// Loaded is aritu.yml as read during the parse. Its target patterns and its
 	// enabled rules answer no flag, so no resolver can carry them out of the parse.
 	Loaded config.Config `kong:"-"`
 }
 
-// ApplyCmd judges files against rules. The patterns are the selector, so aritu
-// holds no opinion about what a test file is: everything they match is judged.
+// ApplyCmd judges files against the rules that are about them. The patterns say
+// which files to consider; each rule's targets say which of them it is handed, so
+// naming a document does not put it in front of a rule about tests.
 type ApplyCmd struct {
-	Patterns []string `arg:"" optional:"" name:"pattern" help:"File or glob to judge; repeat for several. The include list from aritu.yml when omitted."`
+	Patterns []string `arg:"" optional:"" name:"pattern" help:"File or glob to judge; repeat for several. Everything the enabled rules target when omitted."`
 }
 
 // SelftestCmd runs every named rule against its own fixtures.
@@ -59,9 +61,10 @@ type SelftestCmd struct{}
 
 const description = `An LLM linter for tests.
 
-Point it at files and every rule in the rules directory judges them, reported
-once, grouped by file. No flag names a language: a model reads the file, and the
-rules describe properties rather than syntax.`
+Point it at files and every rule that is about them judges them, reported once,
+grouped by file. Name no file and the sweep is everything the enabled rules
+target. No flag names a language: a model reads the file, and the rules describe
+properties rather than syntax.`
 
 const exitCodes = `Exit codes:
 
@@ -222,44 +225,131 @@ func runApply(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit
 	return run.ExitFor(results)
 }
 
-// applyOptions resolves everything the sweep needs before the first model call,
-// so a missing rule or a pattern matching nothing costs nothing to discover.
+// applyOptions resolves everything the sweep needs before the first model call, so
+// a missing rule, a pattern matching nothing or a file no rule is about all cost
+// nothing to discover.
+//
+// The rules are loaded before the files because they are what decides which files
+// there are: with no pattern given, the sweep is whatever the enabled rules target.
 func applyOptions(cli *CLI) (run.Options, error) {
 	opts := run.Options{Votes: cli.Votes, Model: cli.Model, Effort: cli.Effort}
 
-	files, err := targetsFor(cli.Apply.Patterns, cli.Loaded.Include)
+	dir, err := workingDir()
 	if err != nil {
 		return opts, err
 	}
-	opts.Files = files
-
-	rules, err := rulesFor(cli)
+	kinds, err := kindsFor(cli.Loaded, dir)
+	if err != nil {
+		return opts, err
+	}
+	rules, err := rulesFor(cli, kinds.Names())
 	if err != nil {
 		return opts, err
 	}
 	opts.Rules = rules
-	return opts, nil
+	opts.IsTargeted = targetingBy(kinds, dir)
+
+	files, err := filesFor(cli.Apply.Patterns, kinds, targetedKindsOf(rules))
+	if err != nil {
+		return opts, err
+	}
+	opts.Files = files
+	return opts, checkEveryFileIsTargeted(files, rules, opts.IsTargeted)
 }
 
-// targetsFor expands the patterns given on the command line, falling back to the
-// include list aritu.yml supplies. Neither is an error rather than an empty
-// sweep: a run over no files reporting green is how a hook passes because its
-// path was wrong.
-func targetsFor(patterns, include []string) ([]string, error) {
-	selected := patterns
-	if len(selected) == 0 {
-		selected = include
+// filesFor expands the patterns given on the command line, falling back to every
+// file the enabled rules target. An empty sweep is an error either way: a run over
+// no files reporting green is how a hook passes because its path was wrong.
+func filesFor(patterns []string, kinds kind.Set, targeted []string) ([]string, error) {
+	if len(patterns) > 0 {
+		return glob.Expand(patterns)
 	}
-	if len(selected) == 0 {
-		return nil, errors.New("no targets: name a file or glob pattern, or set include in aritu.yml")
+	files, err := kinds.Expand(targeted)
+	if err != nil {
+		return nil, err
 	}
-	return glob.Expand(selected)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no targets: nothing here is %s, so name a file or glob pattern",
+			strings.Join(targeted, " or "))
+	}
+	return files, nil
+}
+
+// kindsFor resolves the vocabulary this repository judges by. Built-in patterns
+// generate against the config file's own directory, or the working directory when
+// there is no config: which files here are tests is a question about here.
+func kindsFor(loaded config.Config, dir string) (kind.Set, error) {
+	return kind.Resolve(repositoryDir(loaded, dir), loaded.Targets)
+}
+
+func repositoryDir(loaded config.Config, dir string) string {
+	if loaded.Dir == "" {
+		return dir
+	}
+	return glob.Rooted(dir, loaded.Dir)
+}
+
+// targetingBy answers whether a rule is about a file, in the one frame the kinds
+// were resolved in: a repository's own patterns are rooted at that repository, so a
+// path typed against the working directory is rooted there before it is compared.
+func targetingBy(kinds kind.Set, dir string) func(rule.Rule, string) bool {
+	return func(judged rule.Rule, file string) bool {
+		return kinds.Covers(judged.Targets, glob.Rooted(dir, file))
+	}
+}
+
+// targetedKindsOf is every kind some enabled rule is about, which is the whole of
+// what a sweep given no pattern has to cover.
+func targetedKindsOf(rules []rule.Rule) []string {
+	targeted := make([]string, 0, len(rules))
+	for _, judged := range rules {
+		for _, name := range judged.Targets {
+			if !slices.Contains(targeted, name) {
+				targeted = append(targeted, name)
+			}
+		}
+	}
+	slices.Sort(targeted)
+	return targeted
+}
+
+// checkEveryFileIsTargeted refuses a file no enabled rule is about. Nothing can
+// judge it, and a sweep that silently skipped it would report as clean as one that
+// covered everything — which is the failure exit code 2 exists for.
+func checkEveryFileIsTargeted(files []string, rules []rule.Rule, isTargeted func(rule.Rule, string) bool) error {
+	untargeted := make([]string, 0, len(files))
+	for _, file := range files {
+		if !isTargetedByAny(rules, file, isTargeted) {
+			untargeted = append(untargeted, file)
+		}
+	}
+	if len(untargeted) == 0 {
+		return nil
+	}
+	return fmt.Errorf("no enabled rule targets %s", strings.Join(untargeted, ", "))
+}
+
+func isTargetedByAny(rules []rule.Rule, file string, isTargeted func(rule.Rule, string) bool) bool {
+	return slices.ContainsFunc(rules, func(judged rule.Rule) bool { return isTargeted(judged, file) })
+}
+
+func workingDir() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("working directory: %w", err)
+	}
+	return dir, nil
 }
 
 // runSelftest runs each named rule against its own fixtures, one table per rule.
 // A rule that cannot be loaded still prints its table, because the table is the
 // diagnostic and an empty one says which rule produced nothing.
 func runSelftest(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+	known, err := knownTargetsFor(cli)
+	if err != nil {
+		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
+		return lint.ExitError
+	}
 	names, err := ruleNamesFor(cli)
 	if err != nil {
 		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
@@ -269,14 +359,30 @@ func runSelftest(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.E
 	ask := askFor(cli)
 	exit := lint.ExitPass
 	for _, name := range names {
-		exit = worse(exit, selftestRule(ctx, ask, cli, name, stdout, stderr))
+		exit = worse(exit, selftestRule(ctx, ask, cli, known, name, stdout, stderr))
 	}
 	return exit
 }
 
-func selftestRule(ctx context.Context, ask claudecli.Ask, cli *CLI, name string, stdout, stderr io.Writer) lint.Exit {
+// knownTargetsFor names the kinds a rule may target. selftest consults them only to
+// load a rule at all: which files a fixture holds is the fixture directory's answer
+// and never a kind's, or a rule's self-test would depend on the config of whichever
+// repository the rule happens to sit in.
+func knownTargetsFor(cli *CLI) ([]string, error) {
+	dir, err := workingDir()
+	if err != nil {
+		return nil, err
+	}
+	kinds, err := kindsFor(cli.Loaded, dir)
+	if err != nil {
+		return nil, err
+	}
+	return kinds.Names(), nil
+}
+
+func selftestRule(ctx context.Context, ask claudecli.Ask, cli *CLI, known []string, name string, stdout, stderr io.Writer) lint.Exit {
 	started := time.Now()
-	opts, results, runErr := selftestResults(ctx, ask, cli, name)
+	opts, results, runErr := selftestResults(ctx, ask, cli, known, name)
 
 	if err := selftest.Format(stdout, opts, results, time.Since(started)); err != nil {
 		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
@@ -289,14 +395,14 @@ func selftestRule(ctx context.Context, ask claudecli.Ask, cli *CLI, name string,
 	return selftest.ExitFor(results)
 }
 
-func selftestResults(ctx context.Context, ask claudecli.Ask, cli *CLI, name string) (selftest.Options, []selftest.Result, error) {
+func selftestResults(ctx context.Context, ask claudecli.Ask, cli *CLI, known []string, name string) (selftest.Options, []selftest.Result, error) {
 	opts := selftest.Options{
 		Rule:   rule.Rule{Name: name},
 		Votes:  cli.Votes,
 		Model:  cli.Model,
 		Effort: cli.Effort,
 	}
-	loaded, err := rule.Load(cli.Rules, name)
+	loaded, err := rule.Load(cli.Rules, name, known)
 	if err != nil {
 		return opts, nil, err
 	}
@@ -318,14 +424,14 @@ func worse(a, b lint.Exit) lint.Exit {
 // rulesFor loads the rules to run. Naming none runs every rule the directory
 // holds, in name order, and a name that resolves to nothing is an error naming it
 // rather than a silent skip.
-func rulesFor(cli *CLI) ([]rule.Rule, error) {
+func rulesFor(cli *CLI, known []string) ([]rule.Rule, error) {
 	names, err := ruleNamesFor(cli)
 	if err != nil {
 		return nil, err
 	}
 	rules := make([]rule.Rule, 0, len(names))
 	for _, name := range names {
-		loaded, err := rule.Load(cli.Rules, name)
+		loaded, err := rule.Load(cli.Rules, name, known)
 		if err != nil {
 			return nil, err
 		}

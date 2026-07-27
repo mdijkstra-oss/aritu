@@ -1,4 +1,5 @@
 ---
+targets: [tests]
 include: [tests]
 include_source: false
 granularity: function

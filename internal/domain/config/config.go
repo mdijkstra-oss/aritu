@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/matthijn/aritu/internal/lib/glob"
 )
 
 // Config is a repository's answers, all optional. A key the file omits stays nil
@@ -20,16 +22,20 @@ import (
 // somebody wrote down has to reach validation and be rejected there, with the
 // same message the flag gives.
 type Config struct {
-	Dir     string    `yaml:"-"`
-	Model   *string   `yaml:"model"`
-	Effort  *string   `yaml:"effort"`
-	Output  *string   `yaml:"output"`
-	Claude  *string   `yaml:"claude"`
-	Votes   *int      `yaml:"votes"`
-	Jobs    *int      `yaml:"jobs"`
-	Timeout *Duration `yaml:"timeout"`
-	Rules   Rules     `yaml:"rules"`
-	Include []string  `yaml:"include"`
+	Dir     string              `yaml:"-"`
+	Model   *string             `yaml:"model"`
+	Effort  *string             `yaml:"effort"`
+	Output  *string             `yaml:"output"`
+	Claude  *string             `yaml:"claude"`
+	Votes   *int                `yaml:"votes"`
+	Jobs    *int                `yaml:"jobs"`
+	Timeout *Duration           `yaml:"timeout"`
+	Rules   Rules               `yaml:"rules"`
+
+	// Targets is the repository's own vocabulary of file kinds: each key names a
+	// kind a rule may be about, and carries the patterns that are of it. A key
+	// matching a built-in kind replaces it, so that one key keeps one meaning.
+	Targets map[string][]string `yaml:"targets"`
 }
 
 // Rules is a block because the word names two things: where rules live, and which
@@ -70,8 +76,8 @@ func Find(startDir string) (path string, found bool, err error) {
 }
 
 // Load decodes a config file strictly, so an unknown key fails rather than being
-// skipped, and resolves Rules.Dir and Include against the file's own directory —
-// each path resolves in the frame it was written in.
+// skipped, and resolves Rules.Dir and the target patterns against the file's own
+// directory — each path resolves in the frame it was written in.
 func Load(path string) (Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -88,7 +94,7 @@ func Load(path string) (Config, error) {
 	}
 	config.Dir = filepath.Dir(path)
 	config.Rules.Dir = resolvedPathAgainst(config.Dir, config.Rules.Dir)
-	config.Include = allResolvedAgainst(config.Dir, config.Include)
+	config.Targets = allTargetsResolvedAgainst(config.Dir, config.Targets)
 	return config, nil
 }
 
@@ -121,25 +127,31 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func resolvedAgainst(base, path string) string {
-	if path == "" || filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(base, path)
-}
-
 func resolvedPathAgainst(base string, path *string) *string {
 	if path == nil {
 		return nil
 	}
-	resolved := resolvedAgainst(base, *path)
+	resolved := glob.Rooted(base, *path)
 	return &resolved
 }
 
 func allResolvedAgainst(base string, paths []string) []string {
 	var resolved []string
 	for _, path := range paths {
-		resolved = append(resolved, resolvedAgainst(base, path))
+		resolved = append(resolved, glob.Rooted(base, path))
+	}
+	return resolved
+}
+
+// allTargetsResolvedAgainst copies rather than resolves in place, so the caller's
+// map is left as it was read.
+func allTargetsResolvedAgainst(base string, targets map[string][]string) map[string][]string {
+	if targets == nil {
+		return nil
+	}
+	resolved := make(map[string][]string, len(targets))
+	for name, patterns := range targets {
+		resolved[name] = allResolvedAgainst(base, patterns)
 	}
 	return resolved
 }

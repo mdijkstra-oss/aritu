@@ -1,5 +1,9 @@
 votes: 1
 
-include:
-  - 'internal/**/*_test.go'
-  - 'cmd/**/*_test.go'
+# The built-in tests kind is every test file anywhere, which here would include the
+# fixtures — and a fail- fixture is a bad test on purpose. So this repository gives
+# its own answer to what a test file of its own is.
+targets:
+  tests:
+    - 'internal/**/*_test.go'
+    - 'cmd/**/*_test.go'

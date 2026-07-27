@@ -28,9 +28,12 @@ claude: /usr/local/bin/claude
 rules:
   dir: ./rules
   enabled: [named-for-behavior, one-reason-to-fail]
-include:
-  - 'internal/**/*_test.go'
-  - 'cmd/**/*_test.go'
+targets:
+  tests:
+    - 'internal/**/*_test.go'
+    - 'cmd/**/*_test.go'
+  migrations:
+    - 'db/migrate/**/*.sql'
 `,
 			want: func(dir string) Config {
 				return Config{
@@ -46,9 +49,12 @@ include:
 						Dir:     given(filepath.Join(dir, "rules")),
 						Enabled: []string{"named-for-behavior", "one-reason-to-fail"},
 					},
-					Include: []string{
-						filepath.Join(dir, "internal/**/*_test.go"),
-						filepath.Join(dir, "cmd/**/*_test.go"),
+					Targets: map[string][]string{
+						"tests": {
+							filepath.Join(dir, "internal/**/*_test.go"),
+							filepath.Join(dir, "cmd/**/*_test.go"),
+						},
+						"migrations": {filepath.Join(dir, "db/migrate/**/*.sql")},
 					},
 				}
 			},
@@ -132,22 +138,33 @@ include:
 			},
 		},
 		{
-			name: "a relative include pattern resolves against the config file",
-			file: `include:
-  - '../sibling/**/*_test.go'
+			name: "a relative target pattern resolves against the config file",
+			file: `targets:
+  tests:
+    - '../sibling/**/*_test.go'
 `,
 			want: func(dir string) Config {
-				return Config{Dir: dir, Include: []string{filepath.Join(filepath.Dir(dir), "sibling/**/*_test.go")}}
+				return Config{Dir: dir, Targets: map[string][]string{
+					"tests": {filepath.Join(filepath.Dir(dir), "sibling/**/*_test.go")},
+				}}
 			},
 		},
 		{
-			name: "an absolute include pattern is left as written",
-			file: `include:
-  - '/srv/checkout/**/*_test.go'
+			name: "an absolute target pattern is left as written",
+			file: `targets:
+  tests:
+    - '/srv/checkout/**/*_test.go'
 `,
 			want: func(dir string) Config {
-				return Config{Dir: dir, Include: []string{"/srv/checkout/**/*_test.go"}}
+				return Config{Dir: dir, Targets: map[string][]string{
+					"tests": {"/srv/checkout/**/*_test.go"},
+				}}
 			},
+		},
+		{
+			name:    "the include list this repository used to carry is now a key nobody defined",
+			file:    "include:\n  - 'internal/**/*_test.go'\n",
+			wantErr: "include",
 		},
 	}
 

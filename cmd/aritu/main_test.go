@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/domain/run"
+	"github.com/matthijn/aritu/internal/lib/kind"
 	"github.com/matthijn/aritu/prompts"
 )
 
@@ -24,6 +26,8 @@ func TestExecute(t *testing.T) {
 	emptyRules := t.TempDir()
 	soloRules := writeRules(t, "solo")
 	twoRules := writeRules(t, "first", "second")
+	docsAndTestRules := writeRuleAbout(t, writeRules(t, "solo"), "prose-is-legible", "docs")
+	mistypedRules := writeRuleAbout(t, t.TempDir(), "mistyped", "test")
 	targets := writeTargets(t)
 	alpha := filepath.Join(targets, "alpha_test.go")
 
@@ -34,6 +38,8 @@ func TestExecute(t *testing.T) {
 	votesRepo := writeRepo(t, "votes: 3\nrules:\n  dir: ./rules\n")
 	typoRepo := writeRepo(t, "vote: 4\n")
 	includeRepo := writeRepo(t, "rules:\n  dir: ./rules\ninclude:\n  - 'internal/**/*_test.go'\n")
+	sweepRepo := writeRepo(t, "rules:\n  dir: ./rules\n")
+	targetsRepo := writeRepo(t, "rules:\n  dir: ./rules\ntargets:\n  tests:\n    - 'internal/pkg/*_test.go'\n")
 	votesRepoPkg := filepath.Join(votesRepo, "internal", "pkg")
 
 	tests := []struct {
@@ -45,6 +51,7 @@ func TestExecute(t *testing.T) {
 		wantStderr  []string
 		wantReports int
 		notWant     string
+		notWantOut  string
 	}{
 		{
 			name:       "no command names the commands there are",
@@ -113,11 +120,25 @@ func TestExecute(t *testing.T) {
 			wantStderr: []string{`unknown effort "extreme"`, "xhigh"},
 		},
 		{
-			name:       "apply with neither a pattern nor an include list says what to pass",
+			name:       "a sweep the enabled rules target nothing in says what to pass",
 			args:       []string{"apply", "--rules", soloRules},
 			want:       lint.ExitError,
 			wantStdout: []string{"0 passed"},
-			wantStderr: []string{"no targets", "aritu.yml"},
+			wantStderr: []string{"no targets", "tests"},
+		},
+		{
+			name:       "a file no enabled rule is about is refused rather than skipped",
+			args:       []string{"apply", "--rules", soloRules, "--claude", satisfiedClaude, filepath.Join(targets, "notes.md")},
+			want:       lint.ExitError,
+			wantStdout: []string{"0 passed"},
+			wantStderr: []string{"no enabled rule targets", "notes.md"},
+		},
+		{
+			name:        "naming a file of another kind alongside one it is about judges only the second",
+			args:        []string{"apply", "--output", "json", "--rules", docsAndTestRules, "--claude", satisfiedClaude, filepath.Join(targets, "notes.md"), alpha},
+			want:        lint.ExitPass,
+			wantStdout:  []string{`"rule": "prose-is-legible"`, `"rule": "solo"`, "notes.md", "alpha_test.go"},
+			wantReports: 2,
 		},
 		{
 			name:       "a pattern matching nothing is an error naming the pattern",
@@ -208,12 +229,35 @@ func TestExecute(t *testing.T) {
 			wantStderr: []string{"vote"},
 		},
 		{
-			name:        "the include list supplies the targets when no pattern is given",
-			dir:         includeRepo,
+			name:       "the include list this repository used to carry is now a key nobody defined",
+			dir:        includeRepo,
+			args:       []string{"apply", "--claude", satisfiedClaude},
+			want:       lint.ExitError,
+			wantStderr: []string{"include"},
+		},
+		{
+			name:        "what the enabled rules target supplies the sweep when no pattern is given",
+			dir:         sweepRepo,
+			args:        []string{"apply", "--output", "json", "--claude", satisfiedClaude},
+			want:        lint.ExitPass,
+			wantStdout:  []string{"alpha_test.go", "scenario_test.go"},
+			wantReports: 2,
+		},
+		{
+			name:        "a targets block replaces the built-in answer, which is how a repository excludes its own fixtures",
+			dir:         targetsRepo,
 			args:        []string{"apply", "--output", "json", "--claude", satisfiedClaude},
 			want:        lint.ExitPass,
 			wantStdout:  []string{"alpha_test.go"},
 			wantReports: 1,
+			notWantOut:  "scenario_test.go",
+		},
+		{
+			name:       "a rule targeting a kind nobody defined fails before a single model call",
+			args:       []string{"apply", "--rules", mistypedRules, "--claude", satisfiedClaude, alpha},
+			want:       lint.ExitError,
+			wantStdout: []string{"0 passed"},
+			wantStderr: []string{"mistyped", "tests"},
 		},
 		{
 			name:       "an explicit config is used and the upward search is skipped",
@@ -273,6 +317,9 @@ func TestExecute(t *testing.T) {
 			}
 			if tc.notWant != "" && strings.Contains(stderr.String(), tc.notWant) {
 				t.Errorf("execute(%q) stderr = %q, want it to omit %q", tc.args, stderr.String(), tc.notWant)
+			}
+			if tc.notWantOut != "" && strings.Contains(stdout.String(), tc.notWantOut) {
+				t.Errorf("execute(%q) stdout = %q, want it to omit %q", tc.args, stdout.String(), tc.notWantOut)
 			}
 			if tc.wantReports > 0 {
 				if got := reportsIn(t, stdout.Bytes()); got != tc.wantReports {
@@ -523,75 +570,199 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestTargetsFor(t *testing.T) {
+func TestFilesFor(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "alpha_test.go"), testFileBody)
+	writeFile(t, filepath.Join(root, "alpha.go"), "package scenario\n")
 	writeFile(t, filepath.Join(root, "sub", "beta_test.go"), testFileBody)
-	writeFile(t, filepath.Join(root, "sub", "notes.md"), "not a target\n")
+	writeFile(t, filepath.Join(root, "sub", "notes.md"), "notes\n")
 	at := func(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
 
 	tests := []struct {
 		name     string
 		patterns []string
-		include  []string
+		targeted []string
 		want     []string
 		wantErr  string
 	}{
 		{
 			name:     "a literal path is taken as itself",
 			patterns: []string{at("alpha_test.go")},
+			targeted: []string{"tests"},
 			want:     []string{at("alpha_test.go")},
 		},
 		{
 			name:     "a double star crosses directories",
 			patterns: []string{at("**", "*_test.go")},
+			targeted: []string{"tests"},
 			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go")},
 		},
 		{
 			name:     "overlapping patterns contribute a file once",
 			patterns: []string{at("**", "*_test.go"), at("sub", "*_test.go")},
+			targeted: []string{"tests"},
 			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go")},
 		},
 		{
-			name:    "the include list is used when no pattern is given",
-			include: []string{at("sub", "*_test.go")},
-			want:    []string{at("sub", "beta_test.go")},
+			name:     "what the rules target is swept when no pattern is given",
+			targeted: []string{"tests"},
+			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go")},
 		},
 		{
-			name:     "a pattern on the command line outranks the include list",
+			name:     "enabling a rule about another kind widens that sweep with no second list to edit",
+			targeted: []string{"docs", "tests"},
+			want:     []string{at("alpha_test.go"), at("sub", "beta_test.go"), at("sub", "notes.md")},
+		},
+		{
+			name:     "a pattern on the command line outranks what the rules target",
 			patterns: []string{at("alpha_test.go")},
-			include:  []string{at("sub", "*_test.go")},
+			targeted: []string{"docs"},
 			want:     []string{at("alpha_test.go")},
 		},
 		{
-			name:    "neither a pattern nor an include list says what to pass",
-			wantErr: "no targets",
+			name:     "a kind matching nothing here is an empty sweep rather than a green one",
+			targeted: []string{"migrations"},
+			wantErr:  "no targets",
 		},
 		{
 			name:     "a pattern matching nothing names itself",
 			patterns: []string{at("nowhere", "**", "*_test.go")},
+			targeted: []string{"tests"},
 			wantErr:  "nowhere",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := targetsFor(tc.patterns, tc.include)
+			kinds, err := kind.Resolve(root, map[string][]string{"migrations": {filepath.Join(root, "db/**/*.sql")}})
+			if err != nil {
+				t.Fatalf("Resolve() error = %v", err)
+			}
+
+			got, err := filesFor(tc.patterns, kinds, tc.targeted)
 
 			if tc.wantErr != "" {
 				if err == nil {
-					t.Fatalf("targetsFor(%q, %q) = %q, want an error mentioning %q", tc.patterns, tc.include, got, tc.wantErr)
+					t.Fatalf("filesFor(%q, %q) = %q, want an error mentioning %q", tc.patterns, tc.targeted, got, tc.wantErr)
 				}
 				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("targetsFor(%q, %q) error = %v, want it to mention %q", tc.patterns, tc.include, err, tc.wantErr)
+					t.Fatalf("filesFor(%q, %q) error = %v, want it to mention %q", tc.patterns, tc.targeted, err, tc.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("targetsFor(%q, %q) error = %v, want none", tc.patterns, tc.include, err)
+				t.Fatalf("filesFor(%q, %q) error = %v, want none", tc.patterns, tc.targeted, err)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("targetsFor(%q, %q) = %q, want %q", tc.patterns, tc.include, got, tc.want)
+				t.Errorf("filesFor(%q, %q) = %q, want %q", tc.patterns, tc.targeted, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckEveryFileIsTargeted(t *testing.T) {
+	root := t.TempDir()
+	kinds, err := kind.Resolve(root, nil)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	isTargeted := targetingBy(kinds, root)
+	aboutTests := rule.Rule{Name: "tests-one-thing", Targets: []string{"tests"}}
+	aboutDocs := rule.Rule{Name: "prose-is-legible", Targets: []string{"docs"}}
+	at := func(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
+
+	tests := []struct {
+		name    string
+		files   []string
+		rules   []rule.Rule
+		wantErr string
+	}{
+		{
+			name:  "every file is of some enabled rule's kind",
+			files: []string{at("alpha_test.go"), at("README.md")},
+			rules: []rule.Rule{aboutTests, aboutDocs},
+		},
+		{
+			name:    "a file only one rule was about, with that rule not enabled",
+			files:   []string{at("alpha_test.go"), at("README.md")},
+			rules:   []rule.Rule{aboutTests},
+			wantErr: "README.md",
+		},
+		{
+			name:    "an implementation file no rule about tests is handed",
+			files:   []string{at("alpha.go")},
+			rules:   []rule.Rule{aboutTests, aboutDocs},
+			wantErr: "alpha.go",
+		},
+		{
+			name:  "a path typed against the working directory is rooted before it is compared",
+			files: []string{"sub/beta_test.go"},
+			rules: []rule.Rule{aboutTests},
+		},
+		{
+			name:  "nothing to sweep is nothing to refuse",
+			files: nil,
+			rules: []rule.Rule{aboutTests},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkEveryFileIsTargeted(tc.files, tc.rules, isTargeted)
+
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("checkEveryFileIsTargeted(%q) = %v, want no error", tc.files, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("checkEveryFileIsTargeted(%q) = nil, want an error naming %q", tc.files, tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("checkEveryFileIsTargeted(%q) error = %q, want it to name %q", tc.files, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestTargetedKindsOf(t *testing.T) {
+	tests := []struct {
+		name  string
+		rules []rule.Rule
+		want  []string
+	}{
+		{
+			name:  "one rule contributes what it is about",
+			rules: []rule.Rule{{Targets: []string{"tests"}}},
+			want:  []string{"tests"},
+		},
+		{
+			name:  "rules about the same kind contribute it once",
+			rules: []rule.Rule{{Targets: []string{"tests"}}, {Targets: []string{"tests"}}},
+			want:  []string{"tests"},
+		},
+		{
+			name:  "rules about different kinds each widen the sweep",
+			rules: []rule.Rule{{Targets: []string{"tests"}}, {Targets: []string{"docs"}}},
+			want:  []string{"docs", "tests"},
+		},
+		{
+			name:  "a rule about several kinds contributes all of them",
+			rules: []rule.Rule{{Targets: []string{"code", "docs"}}},
+			want:  []string{"code", "docs"},
+		},
+		{
+			name:  "no rules target nothing",
+			rules: nil,
+			want:  []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := targetedKindsOf(tc.rules); !slices.Equal(got, tc.want) {
+				t.Errorf("targetedKindsOf() = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -621,9 +792,9 @@ func TestWorse(t *testing.T) {
 
 const testFileBody = "package scenario\n\nimport \"testing\"\n\nfunc TestDoesAThing(t *testing.T) { _ = t }\n"
 
-// writeRules builds a rules directory holding one rule per name, each with a
-// fixture that must pass, so the reporting paths can be reached without depending
-// on the repository's own rules.
+// writeRules builds a rules directory holding one rule per name, each about tests
+// and each with a fixture that must pass, so the reporting paths can be reached
+// without depending on the repository's own rules.
 func writeRules(t *testing.T, names ...string) string {
 	t.Helper()
 	return writeRulesIn(t, t.TempDir(), names...)
@@ -632,21 +803,32 @@ func writeRules(t *testing.T, names ...string) string {
 func writeRulesIn(t *testing.T, root string, names ...string) string {
 	t.Helper()
 	for _, name := range names {
-		writeFile(t, filepath.Join(root, name, "prompt.md"), "---\ninclude_source: false\ngranularity: function\n---\nA test must pin down one behaviour.\n")
-		fixture := filepath.Join(root, name, "fixtures", "pass-only")
-		writeFile(t, filepath.Join(fixture, "scenario.go"), "package scenario\n")
-		writeFile(t, filepath.Join(fixture, "scenario_test.go"), testFileBody)
+		writeRuleAbout(t, root, name, "tests")
 	}
 	return root
 }
 
+// writeRuleAbout adds one rule about the named kind of file, which is the axis
+// these tests exercise: the kind is what decides which files the rule is handed.
+func writeRuleAbout(t *testing.T, root, name, target string) string {
+	t.Helper()
+	writeFile(t, filepath.Join(root, name, "prompt.md"),
+		fmt.Sprintf("---\ntargets: [%s]\ninclude_source: false\ngranularity: function\n---\nA test must pin down one behaviour.\n", target))
+	fixture := filepath.Join(root, name, "fixtures", "pass-only")
+	writeFile(t, filepath.Join(fixture, "scenario.go"), "package scenario\n")
+	writeFile(t, filepath.Join(fixture, "scenario_test.go"), testFileBody)
+	return root
+}
+
 // writeTargets builds a directory of files to judge, kept apart from the rules so
-// a glob over the targets cannot sweep up a fixture.
+// a glob over the targets cannot sweep up a fixture. The document beside the tests
+// is what a rule about tests must not be handed.
 func writeTargets(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "alpha_test.go"), testFileBody)
 	writeFile(t, filepath.Join(root, "beta_test.go"), testFileBody)
+	writeFile(t, filepath.Join(root, "notes.md"), "# Notes\n\nA document nobody tests.\n")
 	return root
 }
 
@@ -813,7 +995,7 @@ func shippedRuleNames(t *testing.T) []string {
 
 func loadRulePrompt(t *testing.T, name string) string {
 	t.Helper()
-	loaded, err := rule.Load(shippedRulesDir, name)
+	loaded, err := rule.Load(shippedRulesDir, name, []string{"code", "docs", "tests"})
 	if err != nil {
 		t.Fatalf("Load(%q) error = %v", name, err)
 	}
