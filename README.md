@@ -168,7 +168,6 @@ A rule is a directory. One rule per directory, under `rules/` by default
 
 ```
 rules/
-  base.md                        # shared prompt, prepended to every rule
   tests-one-thing/
     prompt.md
     fixtures/
@@ -178,17 +177,29 @@ rules/
       pass-ts-grouped-tests-are-separate-units/
         cart.ts
         cart.test.ts
-      fail-py-valid-and-rejected-in-one-test/
-        slug.py
-        test_slug.py
-      fail-java-marches-through-the-type-surface/
-        PriceTable.java
-        PriceTableTest.java
+      fail-go-table-mixes-values-and-rejections/
+        duration.go
+        duration_test.go
 ```
 
-`base.md` holds what every rule would otherwise repeat: that tests come in many
-shapes across ecosystems and the behaviour is judged rather than the syntax, what a
-unit is, and how to write a reason. A rule's `prompt.md` is then only its criterion.
+A rule's `prompt.md` is only its criterion. Everything every rule would otherwise
+repeat — what judging means, that tests come in many shapes across ecosystems and
+the behaviour is judged rather than the syntax, what a unit is, how to write a
+reason — lives in `prompts/`, embedded in the binary:
+
+```
+prompts/
+  verdict.md                 # what a verdict is, and how to write its reason
+  enumerate.md               # how to list a file's units
+  units/
+    tests.md                 # what a test, a scope and a case are
+    tests-enumerate.md       # what to list and what to leave out
+```
+
+Each prompt aritu sends is those layers joined, generic first:
+`verdict.md` + `units/tests.md` + the rule's `prompt.md` + the units and files.
+The unit model sits in its own layer so that judging something other than tests is
+a matter of writing another one.
 
 `prompt.md` carries YAML frontmatter and that criterion:
 
@@ -387,7 +398,7 @@ which costs nothing to know and cannot be disagreed with.
 | `--votes` | `1` | rounds that must all agree before a unit passes |
 | `--jobs` | `5` | model calls allowed in flight at once |
 | `--effort` | — | reasoning effort; empty leaves the CLI default |
-| `--rules` | `./rules` | directory holding `base.md` and one subdirectory per rule |
+| `--rules` | `./rules` | directory holding one subdirectory per rule |
 | `--claude` | `claude` | claude CLI binary to invoke |
 | `--timeout` | `10m` | deadline for the whole run, so a hung CLI cannot hang a commit hook |
 

@@ -37,7 +37,7 @@ type CLI struct {
 	Votes    int           `help:"Rounds that must all agree before a unit passes." default:"${votes}"`
 	Jobs     int           `help:"Model calls allowed in flight at once." default:"${jobs}"`
 	Output   string        `help:"How to render the report: pretty or json." default:"${output}"`
-	Rules    string        `help:"Directory holding base.md and one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
+	Rules    string        `help:"Directory holding one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
 	Claude   string        `help:"claude CLI binary to invoke." default:"${claude}"`
 	Timeout  time.Duration `help:"Deadline for the whole run, so a hung CLI cannot hang a commit hook." default:"${timeout}"`
 	Apply    ApplyCmd      `cmd:"" help:"Judge files against rules."`
@@ -238,12 +238,6 @@ func applyOptions(cli *CLI) (run.Options, error) {
 		return opts, err
 	}
 	opts.Rules = rules
-
-	base, err := rule.LoadBase(cli.Rules)
-	if err != nil {
-		return opts, err
-	}
-	opts.Base = base
 	return opts, nil
 }
 
@@ -307,12 +301,6 @@ func selftestResults(ctx context.Context, ask claudecli.Ask, cli *CLI, name stri
 		return opts, nil, err
 	}
 	opts.Rule = loaded
-
-	base, err := rule.LoadBase(cli.Rules)
-	if err != nil {
-		return opts, nil, err
-	}
-	opts.Base = base
 
 	fixtures, err := rule.LoadFixtures(loaded)
 	if err != nil {

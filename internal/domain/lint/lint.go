@@ -14,6 +14,7 @@ import (
 	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/lib/claudecli"
 	"github.com/matthijn/aritu/internal/lib/vote"
+	"github.com/matthijn/aritu/prompts"
 )
 
 // Exit is a process exit status. A split vote is a rule failure, never a
@@ -51,7 +52,6 @@ type Report struct {
 // Options configures one Apply run.
 type Options struct {
 	Rule   rule.Rule
-	Base   string
 	File   string
 	Votes  int
 	Model  string
@@ -187,96 +187,31 @@ func ExitFor(r Report) Exit {
 	return ExitFail
 }
 
-// BuildNamesPrompt asks the model to enumerate the units a rule judges. It is
-// never called at file granularity, where the unit is the path and no model is
-// needed to know it.
-func BuildNamesPrompt(granularity rule.Granularity, test SourceFile) string {
-	build, isKnown := namesPrompts[granularity]
-	if !isKnown {
+// BuildNamesPrompt asks the model to enumerate a file's units. It is never called
+// at file granularity, where the unit is the path and no model is needed to know it.
+func BuildNamesPrompt(granularity rule.Granularity, source SourceFile) string {
+	if !NeedsEnumeration(granularity) {
 		panic(fmt.Sprintf("no names prompt for granularity: %s", granularity))
 	}
-	return build(test)
+	return prompts.Enumerate(formatFileBlock(source))
 }
 
-// BuildVerdictPrompt frames the shared base prompt and one rule's criterion
-// around the files under judgement and the exact units to judge. The units are
-// listed rather than left to be re-derived: two independent enumerations of
-// twenty-five table rows will phrase one of them differently sooner or later,
-// and every such disagreement would surface as a could-not-run.
-func BuildVerdictPrompt(base, rulePrompt string, files []SourceFile, units []Unit) string {
-	var b strings.Builder
-	if trimmed := strings.TrimSpace(base); trimmed != "" {
-		b.WriteString(trimmed)
-		b.WriteString("\n\n---\n\n")
-	}
-	b.WriteString(strings.TrimSpace(rulePrompt))
-	b.WriteString("\n\n---\n\n")
-	b.WriteString("Judge exactly these units against the rule above. Each line gives the unit, then the key to answer under:\n")
+// BuildVerdictPrompt frames one rule's criterion around the files under judgement
+// and the exact units to judge. The units are listed rather than left to be
+// re-derived: two independent enumerations of twenty-five table rows will phrase one
+// of them differently sooner or later, and every such disagreement would surface as
+// a could-not-run.
+func BuildVerdictPrompt(rulePrompt string, files []SourceFile, units []Unit) string {
+	var listed strings.Builder
 	for _, unit := range units {
-		b.WriteString(fmt.Sprintf("- %s   ->   %s\n", unit.Name, unit.Key))
+		fmt.Fprintf(&listed, "- %s   ->   %s\n", unit.Name, unit.Key)
 	}
-	b.WriteString("\nJudge the unit as written on the left. The key on the right is only where the answer goes.\n\n")
+	var sources strings.Builder
 	for _, f := range files {
-		b.WriteString(formatFileBlock(f))
-		b.WriteString("\n")
+		sources.WriteString(formatFileBlock(f))
+		sources.WriteString("\n")
 	}
-	return b.String()
-}
-
-var namesPrompts = map[rule.Granularity]func(SourceFile) string{
-	rule.GranularityFunction: buildFunctionNamesPrompt,
-	rule.GranularityTest:     buildTestNamesPrompt,
-}
-
-// levelsPreamble defines the two levels by the role a construct plays rather than
-// by the syntax that declares it, because the syntax differs in every ecosystem
-// and the role does not. Both prompts open with it so that neither can drift into
-// describing one ecosystem's spelling.
-const levelsPreamble = `A **test** is the smallest thing this file's framework runs and reports under its own name.
-
-An **enclosing scope** is anything that groups tests and qualifies their names without being run as a test itself: a grouping block, a suite, a fixture class, a module. Scopes are namespaces, not tests.
-
-A **case** is one leaf of a single test: one row of a table of cases, one generated or parametrised argument set, or one subdivision declared inside the test body. A case is not a test of its own; it is one execution of one test.
-
-Write a name by joining its enclosing scopes, outermost first, with " > ", then the test's own name. A test declared at the top level of the file has no scopes and is written alone.
-`
-
-func buildFunctionNamesPrompt(test SourceFile) string {
-	var b strings.Builder
-	b.WriteString("List every test declared in the test file below.\n\n")
-	b.WriteString(levelsPreamble)
-	b.WriteString("\nList the tests. Do not list their cases: a test that runs twenty rows is still one entry here.\n\n")
-	b.WriteString("Do not list any of the following:\n")
-	b.WriteString("- helper functions, including ones that make assertions or take the framework's test handle\n")
-	b.WriteString("- setup and teardown hooks, and lifecycle methods the framework calls around tests\n")
-	b.WriteString("- enclosing scopes on their own; they appear only as the prefix of a test's name\n")
-	b.WriteString("- the type, class or literal holding a table of cases, and the names of those cases\n")
-	b.WriteString("- benchmarks, fuzz targets, property generators and documentation examples\n\n")
-	b.WriteString("Take every name exactly as written in the source. Report in declaration order.\n\n")
-	b.WriteString(formatFileBlock(test))
-	return b.String()
-}
-
-func buildTestNamesPrompt(test SourceFile) string {
-	var b strings.Builder
-	b.WriteString("List every unit in the test file below that can fail on its own and be named.\n\n")
-	b.WriteString(levelsPreamble)
-	b.WriteString("\nA unit is one case, written as \"Name (case name)\" with the case name exactly as it appears in the source. A test that declares no cases is one unit by itself, written as just \"Name\". In both, \"Name\" is the scope-joined name above.\n\n")
-	b.WriteString("Examples of the shape, not of any one ecosystem's syntax:\n")
-	b.WriteString("- a test with no cases, no scopes                ->  ParsesHostBeforeColon\n")
-	b.WriteString("- the same test inside two scopes               ->  Parser > Address > ParsesHostBeforeColon\n")
-	b.WriteString("- a test whose cases are named in a table       ->  ParseAddress (rejects blank input)\n")
-	b.WriteString("- a scoped test whose cases are parametrised    ->  Parser > ParseAddress (port above the maximum)\n\n")
-	b.WriteString("When two cases under one test share a name, keep the first as written and append #01, #02 and so on to the later ones.\n\n")
-	b.WriteString("Do not list any of the following:\n")
-	b.WriteString("- helper functions, including ones that make assertions or take the framework's test handle\n")
-	b.WriteString("- setup and teardown hooks, and lifecycle methods the framework calls around tests\n")
-	b.WriteString("- the type, class or literal holding a table of cases, or its field names; only its cases\n")
-	b.WriteString("- benchmarks, fuzz targets, property generators and documentation examples\n")
-	b.WriteString("- cases whose name is built at run time rather than written in the source; when a test's cases cannot be named from the source, list that test itself as one unit\n\n")
-	b.WriteString("Report units in declaration order.\n\n")
-	b.WriteString(formatFileBlock(test))
-	return b.String()
+	return prompts.Verdict(rulePrompt, listed.String(), sources.String())
 }
 
 type namesReply struct {
@@ -346,7 +281,7 @@ func askNames(ctx context.Context, ask claudecli.Ask, opts Options, test SourceF
 
 func askVerdicts(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
 	raw, err := ask(ctx, claudecli.Request{
-		Prompt: BuildVerdictPrompt(opts.Base, opts.Rule.Prompt, files, units),
+		Prompt: BuildVerdictPrompt(opts.Rule.Prompt, files, units),
 		Model:  opts.Model,
 		Effort: opts.Effort,
 		Schema: VerdictSchemaFor(units),

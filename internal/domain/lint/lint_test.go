@@ -416,40 +416,25 @@ func TestExitFor(t *testing.T) {
 	}
 }
 
+// TestBuildNamesPrompt asks both enumerating granularities for the same file. Both
+// must produce the same leaf question: coarser levels roll up from the leaves in
+// code, so a second, coarser enumeration prompt would be a second answer to buy for
+// something a string split already knows.
 func TestBuildNamesPrompt(t *testing.T) {
-	tests := []struct {
-		name        string
-		granularity rule.Granularity
-		want        []string
-	}{
-		{
-			name:        "function granularity asks for whole tests and not their cases",
-			granularity: rule.GranularityFunction,
-			want: []string{
-				"smallest thing this file's framework runs",
-				"enclosing scope", `joining its enclosing scopes`, `" > "`,
-				"Do not list their cases",
-				"helper functions", "setup and teardown hooks",
-				"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
-			},
-		},
-		{
-			name:        "test granularity asks for each case as its own leaf",
-			granularity: rule.GranularityTest,
-			want: []string{
-				"smallest thing this file's framework runs",
-				"one row of a table of cases", "parametrised argument set",
-				`"Name (case name)"`, "Parser > Address > ParsesHostBeforeColon",
-				"#01", "built at run time",
-				"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
-			},
-		},
+	want := []string{
+		"smallest thing this file's framework runs",
+		"enclosing scope", "joining its enclosing scopes", `" > "`,
+		"one row of a table of cases", "parametrised argument set",
+		`"Name (case name)"`, "Parser > Address > ParsesHostBeforeColon",
+		"#01", "built at run time",
+		"helper functions", "setup and teardown hooks",
+		"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			prompt := BuildNamesPrompt(tc.granularity, SourceFile{Path: "pkg/parser_test.go", Content: testFileSource})
-			for _, want := range tc.want {
+	for _, granularity := range []rule.Granularity{rule.GranularityFunction, rule.GranularityTest} {
+		t.Run(granularity.String()+" granularity asks for each case as its own leaf", func(t *testing.T) {
+			prompt := BuildNamesPrompt(granularity, SourceFile{Path: "pkg/parser_test.go", Content: testFileSource})
+			for _, want := range want {
 				if !strings.Contains(prompt, want) {
 					t.Errorf("names prompt does not contain %q:\n%s", want, prompt)
 				}
@@ -468,23 +453,19 @@ func TestBuildNamesPromptPanicsAtFileGranularity(t *testing.T) {
 }
 
 func TestBuildVerdictPrompt(t *testing.T) {
-	const base = "Judge the behavior a test pins down, never its syntax."
 	files := []SourceFile{
 		{Path: "pkg/parser_test.go", Content: testFileSource},
 		{Path: "pkg/parser.go", Content: sourceFileSource},
 	}
 	units := UnitsFor([]string{"TestParsesHost", "TestRejectsPort (empty input)"})
-	prompt := BuildVerdictPrompt(base, "\n\n"+rulePrompt+"\n", files, units)
+	prompt := BuildVerdictPrompt("\n\n"+rulePrompt+"\n", files, units)
 
-	t.Run("base prompt comes first", func(t *testing.T) {
-		if !strings.HasPrefix(prompt, base) {
-			t.Errorf("verdict prompt does not open with the base prompt:\n%s", prompt)
-		}
-	})
-
-	t.Run("rule body follows the base prompt", func(t *testing.T) {
-		if strings.Index(prompt, rulePrompt) < strings.Index(prompt, base) {
-			t.Errorf("rule body precedes the base prompt:\n%s", prompt)
+	t.Run("the rule follows the shared guidance and precedes the units", func(t *testing.T) {
+		shared := strings.Index(prompt, "Writing the reason")
+		rule := strings.Index(prompt, rulePrompt)
+		listed := strings.Index(prompt, "the key to answer under")
+		if !(shared < rule && rule < listed) {
+			t.Errorf("layering is shared=%d rule=%d units=%d, want ascending:\n%s", shared, rule, listed, prompt)
 		}
 	})
 
@@ -508,14 +489,6 @@ func TestBuildVerdictPrompt(t *testing.T) {
 				t.Errorf("verdict prompt does not contain %q:\n%s", tc.want, prompt)
 			}
 		})
-	}
-}
-
-func TestBuildVerdictPromptOmitsAnEmptyBase(t *testing.T) {
-	prompt := BuildVerdictPrompt("  \n ", rulePrompt, []SourceFile{{Path: "a_test.go"}}, UnitsFor([]string{"TestA"}))
-
-	if !strings.HasPrefix(prompt, rulePrompt) {
-		t.Errorf("an empty base should leave the rule body first:\n%s", prompt)
 	}
 }
 

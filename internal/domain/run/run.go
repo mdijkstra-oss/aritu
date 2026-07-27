@@ -17,7 +17,6 @@ import (
 // Options configures one multi-target run.
 type Options struct {
 	Rules  []rule.Rule
-	Base   string
 	Files  []string
 	Votes  int
 	Model  string
@@ -203,7 +202,6 @@ func EnvelopeOf(results []Result) Envelope {
 func targetFor(opts Options, judged rule.Rule, file string) lint.Options {
 	return lint.Options{
 		Rule:   judged,
-		Base:   opts.Base,
 		File:   file,
 		Votes:  opts.Votes,
 		Model:  opts.Model,

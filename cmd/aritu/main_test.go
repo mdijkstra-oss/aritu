@@ -16,6 +16,7 @@ import (
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/domain/run"
+	"github.com/matthijn/aritu/prompts"
 )
 
 func TestExecute(t *testing.T) {
@@ -23,7 +24,6 @@ func TestExecute(t *testing.T) {
 	emptyRules := t.TempDir()
 	soloRules := writeRules(t, "solo")
 	twoRules := writeRules(t, "first", "second")
-	baselessRules := writeRulesWithoutBase(t)
 	targets := writeTargets(t)
 	alpha := filepath.Join(targets, "alpha_test.go")
 
@@ -134,13 +134,6 @@ func TestExecute(t *testing.T) {
 			wantStderr: []string{"no-such-rule"},
 		},
 		{
-			name:       "a rules directory with no shared base prompt",
-			args:       []string{"apply", "--rules", baselessRules, alpha},
-			want:       lint.ExitError,
-			wantStdout: []string{"0 passed"},
-			wantStderr: []string{"base prompt", "base.md"},
-		},
-		{
 			name:       "a rules directory holding no rules",
 			args:       []string{"apply", "--rules", emptyRules, alpha},
 			want:       lint.ExitError,
@@ -234,13 +227,6 @@ func TestExecute(t *testing.T) {
 			want:       lint.ExitError,
 			wantStdout: []string{"FIXTURE", "EXPECT", "RESULT", "VERDICTS", "0/0 fixtures hold"},
 			wantStderr: []string{"aritu selftest:", "no-such-rule"},
-		},
-		{
-			name:       "selftest reports a rules directory with no shared base prompt",
-			args:       []string{"selftest", "--rules", baselessRules, "--rule", "solo"},
-			want:       lint.ExitError,
-			wantStdout: []string{"FIXTURE"},
-			wantStderr: []string{"base prompt", "base.md"},
 		},
 		{
 			name:       "selftest still prints its table when the model cannot be reached",
@@ -645,24 +631,11 @@ func writeRules(t *testing.T, names ...string) string {
 
 func writeRulesIn(t *testing.T, root string, names ...string) string {
 	t.Helper()
-	writeFile(t, filepath.Join(root, "base.md"), "Judge the behaviour a test pins down, never its syntax.\n")
 	for _, name := range names {
 		writeFile(t, filepath.Join(root, name, "prompt.md"), "---\ninclude_source: false\ngranularity: function\n---\nA test must pin down one behaviour.\n")
 		fixture := filepath.Join(root, name, "fixtures", "pass-only")
 		writeFile(t, filepath.Join(fixture, "scenario.go"), "package scenario\n")
 		writeFile(t, filepath.Join(fixture, "scenario_test.go"), testFileBody)
-	}
-	return root
-}
-
-// writeRulesWithoutBase builds a rules directory holding a valid rule but no
-// base.md, the shape that must fail loudly rather than judge without the shared
-// guidance every rule is written against.
-func writeRulesWithoutBase(t *testing.T) string {
-	t.Helper()
-	root := writeRules(t, "solo")
-	if err := os.Remove(filepath.Join(root, "base.md")); err != nil {
-		t.Fatalf("removing base.md: %v", err)
 	}
 	return root
 }
@@ -789,15 +762,11 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 		text func(t *testing.T) string
 	}{
 		{
-			name: "the shared base prompt",
-			text: func(t *testing.T) string { return loadBase(t) },
+			name: "the verdict prompt",
+			text: func(*testing.T) string { return prompts.Verdict("", "", "") },
 		},
 		{
-			name: "the enumeration prompt for whole tests",
-			text: func(*testing.T) string { return namesPrompt(rule.GranularityFunction) },
-		},
-		{
-			name: "the enumeration prompt for leaves",
+			name: "the enumeration prompt",
 			text: func(*testing.T) string { return namesPrompt(rule.GranularityTest) },
 		},
 		{
@@ -840,15 +809,6 @@ func shippedRuleNames(t *testing.T) []string {
 		t.Fatalf("List() error = %v", err)
 	}
 	return names
-}
-
-func loadBase(t *testing.T) string {
-	t.Helper()
-	base, err := rule.LoadBase(shippedRulesDir)
-	if err != nil {
-		t.Fatalf("LoadBase() error = %v", err)
-	}
-	return base
 }
 
 func loadRulePrompt(t *testing.T, name string) string {

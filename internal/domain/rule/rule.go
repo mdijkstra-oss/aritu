@@ -80,23 +80,7 @@ func Load(rulesDir, name string) (Rule, error) {
 	}, nil
 }
 
-// LoadBase reads the shared prompt prepended to every rule body. Its absence is
-// an error rather than an empty string: without it every verdict call silently
-// loses the guidance that keeps rules comparable, and nothing would report that.
-func LoadBase(rulesDir string) (string, error) {
-	raw, err := os.ReadFile(filepath.Join(rulesDir, baseFileName))
-	if err != nil {
-		return "", fmt.Errorf("shared base prompt: %w", err)
-	}
-	base := strings.TrimSpace(string(raw))
-	if base == "" {
-		return "", fmt.Errorf("shared base prompt: %s is empty", filepath.Join(rulesDir, baseFileName))
-	}
-	return base, nil
-}
-
-// List names every rule in the directory, sorted. Only directories count: base.md
-// is a file at the root and is the shared prompt, not a rule.
+// List names every rule in the directory, sorted. Only directories count.
 func List(rulesDir string) ([]string, error) {
 	entries, err := os.ReadDir(rulesDir)
 	if err != nil {
@@ -245,7 +229,6 @@ func (g Granularity) String() string {
 
 const (
 	promptFileName  = "prompt.md"
-	baseFileName    = "base.md"
 	fixturesDirName = "fixtures"
 )
 
