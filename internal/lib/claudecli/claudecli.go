@@ -46,6 +46,35 @@ func Exec(binary string) Ask {
 	}
 }
 
+// Retry runs a call again when the model failed to answer in the shape it was
+// asked for. The CLI already resamples inside one turn and gives up after five
+// attempts; this starts a fresh turn, which is what recovers a call whose whole
+// context went wrong rather than one unlucky sample.
+//
+// Only a failure the model itself reported is retried. A binary that will not
+// start, a cancelled context and an envelope this package could not parse are all
+// conditions a second attempt would meet again, and retrying them would turn a
+// clear error into a slow one. Attempts below two leave the ask untouched.
+func Retry(ask Ask, attempts int) Ask {
+	if attempts < 2 {
+		return ask
+	}
+	return func(ctx context.Context, req Request) (json.RawMessage, error) {
+		var err error
+		for range attempts {
+			var answer json.RawMessage
+			answer, err = ask(ctx, req)
+			if err == nil {
+				return answer, nil
+			}
+			if ctx.Err() != nil || !errors.Is(err, errModelFailure) {
+				return nil, err
+			}
+		}
+		return nil, err
+	}
+}
+
 // Throttle bounds how many calls may be in flight at once. Fixture-level and
 // vote-level concurrency multiply, so a ceiling at this seam is the only one that
 // holds however the callers above it nest their goroutines. A limit below one

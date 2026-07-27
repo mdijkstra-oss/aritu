@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -325,5 +326,109 @@ func TestThrottleReleasesTheSlotWhenTheCallFails(t *testing.T) {
 		if _, err := throttled(context.Background(), Request{}); err == nil {
 			t.Fatal("want the underlying error, got none")
 		}
+	}
+}
+
+func TestRetry(t *testing.T) {
+	answer := json.RawMessage(`{"ok":true}`)
+	modelFailure := fmt.Errorf("claudecli: %w: structured_output_retry_exhausted", errModelFailure)
+	unstartable := errors.New("claudecli: cannot run \"claude\"")
+
+	tests := []struct {
+		name      string
+		attempts  int
+		replies   []error
+		wantCalls int
+		wantErr   error
+	}{
+		{
+			name:      "an answer on the first turn asks once",
+			attempts:  3,
+			replies:   []error{nil},
+			wantCalls: 1,
+		},
+		{
+			name:      "a model failure is asked again",
+			attempts:  3,
+			replies:   []error{modelFailure, nil},
+			wantCalls: 2,
+		},
+		{
+			name:      "the last failure is reported once the attempts run out",
+			attempts:  3,
+			replies:   []error{modelFailure, modelFailure, modelFailure},
+			wantCalls: 3,
+			wantErr:   modelFailure,
+		},
+		{
+			name:      "a failure a second turn would meet again is not retried",
+			attempts:  3,
+			replies:   []error{unstartable},
+			wantCalls: 1,
+			wantErr:   unstartable,
+		},
+		{
+			name:      "one attempt leaves the ask alone",
+			attempts:  1,
+			replies:   []error{modelFailure},
+			wantCalls: 1,
+			wantErr:   modelFailure,
+		},
+		{
+			name:      "attempts below one leave the ask alone",
+			attempts:  0,
+			replies:   []error{modelFailure},
+			wantCalls: 1,
+			wantErr:   modelFailure,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			scripted := func(context.Context, Request) (json.RawMessage, error) {
+				defer func() { calls++ }()
+				if calls >= len(tc.replies) {
+					t.Fatalf("asked %d times, only %d replies scripted", calls+1, len(tc.replies))
+				}
+				if err := tc.replies[calls]; err != nil {
+					return nil, err
+				}
+				return answer, nil
+			}
+
+			got, err := Retry(scripted, tc.attempts)(context.Background(), Request{})
+
+			if calls != tc.wantCalls {
+				t.Errorf("asked %d times, want %d", calls, tc.wantCalls)
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil && string(got) != string(answer) {
+				t.Errorf("answer = %s, want %s", got, answer)
+			}
+		})
+	}
+}
+
+func TestRetryStopsWhenTheContextEnds(t *testing.T) {
+	modelFailure := fmt.Errorf("claudecli: %w: structured_output_retry_exhausted", errModelFailure)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	calls := 0
+	failing := func(context.Context, Request) (json.RawMessage, error) {
+		calls++
+		cancel()
+		return nil, modelFailure
+	}
+
+	_, err := Retry(failing, 5)(ctx, Request{})
+
+	if calls != 1 {
+		t.Errorf("asked %d times after the context ended, want 1", calls)
+	}
+	if !errors.Is(err, modelFailure) {
+		t.Errorf("error = %v, want the model failure", err)
 	}
 }
