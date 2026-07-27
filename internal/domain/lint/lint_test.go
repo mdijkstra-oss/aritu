@@ -40,13 +40,47 @@ func Parse(raw string) error { return nil }
 	noNames   = `{"names":[]}`
 	sameName  = `{"names":["TestParsesHost","TestParsesHost"]}`
 
-	bothSatisfy = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":true,"reason":""}}`
-	portFails   = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":false,"reason":"names the unit"}}`
-	noneSatisfy = `{"TestParsesHost":{"satisfies":false,"reason":"host reason"},"TestRejectsPort":{"satisfies":false,"reason":"port reason"}}`
-	extraName   = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":true,"reason":""},"TestGhost":{"satisfies":true,"reason":""}}`
-	droppedName = `{"TestParsesHost":{"satisfies":true,"reason":""}}`
-	noResults   = `{}`
+	noResults = `{}`
 )
+
+var (
+	bothSatisfy = reply(answers(true, ""), answers(true, ""))
+	portFails   = reply(answers(true, ""), answers(false, "names the unit"))
+	noneSatisfy = reply(answers(false, "host reason"), answers(false, "port reason"))
+	droppedName = reply(answers(true, ""))
+	extraName   = replyUnder(
+		[]string{"TestParsesHost", "TestRejectsPort", "TestGhost"},
+		answers(true, ""), answers(true, ""), answers(true, ""),
+	)
+)
+
+// reply renders a verdict for the file's two tests under the keys the schema
+// actually names. Restating those keys as literals would pin every stub here to
+// one spelling of the key derivation, so the stubs derive them the same way the
+// code under test does.
+func reply(given ...verdictAnswer) string {
+	return replyUnder([]string{"TestParsesHost", "TestRejectsPort"}, given...)
+}
+
+func replyUnder(names []string, given ...verdictAnswer) string {
+	rendered := map[string]verdictAnswer{}
+	for at, answer := range given {
+		rendered[keyOf(names[at])] = answer
+	}
+	encoded, err := json.Marshal(rendered)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func answers(satisfies bool, reason string) verdictAnswer {
+	return verdictAnswer{Satisfies: satisfies, Reason: reason}
+}
+
+func keyOf(name string) string {
+	return UnitsFor([]string{name})[0].Key
+}
 
 func TestApply(t *testing.T) {
 	unreachable := errors.New("claude: connection refused")
@@ -94,7 +128,7 @@ func TestApply(t *testing.T) {
 			wantExit:     ExitFail,
 		},
 		{
-			name:         "file without test functions passes vacuously",
+			name:         "file with no tests passes vacuously",
 			rule:         testOnly,
 			votes:        4,
 			names:        ok(noNames),
@@ -121,7 +155,7 @@ func TestApply(t *testing.T) {
 			votes:    4,
 			names:    ok(bothNames),
 			verdicts: repeat(4, ok(extraName)),
-			wantErr:  "unexpected TestGhost",
+			wantErr:  "unexpected " + keyOf("TestGhost"),
 		},
 		{
 			name:     "verdict dropping a listed function errors",
@@ -129,7 +163,7 @@ func TestApply(t *testing.T) {
 			votes:    4,
 			names:    ok(bothNames),
 			verdicts: repeat(4, ok(droppedName)),
-			wantErr:  "missing TestRejectsPort",
+			wantErr:  "missing " + keyOf("TestRejectsPort"),
 		},
 		{
 			name:    "duplicate names from the name call error",
@@ -172,7 +206,7 @@ func TestApply(t *testing.T) {
 			rule:    testOnly,
 			votes:   4,
 			names:   ok(`{"names":`),
-			wantErr: "reading test function names",
+			wantErr: "reading the test names",
 		},
 		{
 			name:     "unparseable verdict reply errors",
@@ -190,12 +224,12 @@ func TestApply(t *testing.T) {
 			wantErr: "no such file",
 		},
 		{
-			name:     "a rule needing the source rejects a path that is not a test file",
+			name:     "a rule needing the source rejects a path no convention covers",
 			files:    map[string]string{sourceFileName: sourceFileSource},
 			fileName: sourceFileName,
 			rule:     withSource,
 			votes:    1,
-			wantErr:  "is not a Go test file",
+			wantErr:  "matches no test file naming convention",
 		},
 	}
 
@@ -242,7 +276,7 @@ func TestApply(t *testing.T) {
 }
 
 func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
-	const bothPass = `{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":true,"reason":""}}`
+	bothPass := reply(answers(true, ""), answers(true, ""))
 
 	tests := []struct {
 		name     string
@@ -261,7 +295,7 @@ func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
 			votes: 2,
 			verdicts: []cannedReply{
 				ok(bothPass),
-				ok(`{"TestParsesHost":{"satisfies":true,"reason":""},"TestRejectsPort":{"satisfies":false,"reason":"names the unit, not the outcome"}}`),
+				ok(reply(answers(true, ""), answers(false, "names the unit, not the outcome"))),
 			},
 			want: map[string][]string{"TestRejectsPort": {"names the unit, not the outcome"}},
 		},
@@ -269,8 +303,8 @@ func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
 			name:  "a unanimous rejection keeps one reason per dissenting run",
 			votes: 2,
 			verdicts: []cannedReply{
-				ok(`{"TestParsesHost":{"satisfies":false,"reason":"first round on host"},"TestRejectsPort":{"satisfies":false,"reason":"first round on port"}}`),
-				ok(`{"TestParsesHost":{"satisfies":false,"reason":"second round on host"},"TestRejectsPort":{"satisfies":false,"reason":"second round on port"}}`),
+				ok(reply(answers(false, "first round on host"), answers(false, "first round on port"))),
+				ok(reply(answers(false, "second round on host"), answers(false, "second round on port"))),
 			},
 			want: map[string][]string{
 				"TestParsesHost":  {"first round on host", "second round on host"},
@@ -281,7 +315,7 @@ func TestApplyCollectsReasonsForUnitsThatFellShort(t *testing.T) {
 			name:  "a blank reason is dropped rather than recorded as empty",
 			votes: 1,
 			verdicts: []cannedReply{
-				ok(`{"TestParsesHost":{"satisfies":false,"reason":"   "},"TestRejectsPort":{"satisfies":false,"reason":"port reason"}}`),
+				ok(reply(answers(false, "   "), answers(false, "port reason"))),
 			},
 			want: map[string][]string{"TestRejectsPort": {"port reason"}},
 		},
@@ -319,9 +353,10 @@ func sameReasons(got, want []string) bool {
 func TestApplySkipsTheNamesCallAtFileGranularity(t *testing.T) {
 	dir := writeFiles(t, nil)
 	file := filepath.Join(dir, testFileName)
+	key := UnitsAt(rule.GranularityFile, file, nil)[0].Key
 	asker := &tableAsker{
 		names:    fails(errors.New("the names call must not be made at file granularity")),
-		verdicts: repeat(2, ok(`{"FILE":{"satisfies":true,"reason":""}}`)),
+		verdicts: repeat(2, ok(fmt.Sprintf(`{%q:{"satisfies":true,"reason":"covered"}}`, key))),
 	}
 	opts := Options{
 		Rule:  rule.Rule{Name: "shared-state", Prompt: rulePrompt, Granularity: rule.GranularityFile},
@@ -329,8 +364,6 @@ func TestApplySkipsTheNamesCallAtFileGranularity(t *testing.T) {
 		Votes: 2,
 		Model: "sonnet",
 	}
-	asker.verdicts = repeat(2, ok(fmt.Sprintf(`{%q:{"satisfies":true,"reason":""}}`, UnitsFor([]string{file})[0].Key)))
-
 	report, err := Apply(context.Background(), asker.ask, opts)
 
 	if err != nil {
@@ -363,7 +396,7 @@ func TestExitFor(t *testing.T) {
 			want:   ExitFail,
 		},
 		{
-			name:   "no test functions passes",
+			name:   "no tests passes",
 			report: Report{Votes: 4, Verdicts: map[string]int{}},
 			want:   ExitPass,
 		},
@@ -390,19 +423,23 @@ func TestBuildNamesPrompt(t *testing.T) {
 		want        []string
 	}{
 		{
-			name:        "function granularity asks for whole test functions",
+			name:        "function granularity asks for whole tests and not their cases",
 			granularity: rule.GranularityFunction,
 			want: []string{
-				"top-level func", "begins with Test", "*testing.T",
-				"helper functions", "table cases", "t.Run",
+				"smallest thing this file's framework runs",
+				"enclosing scope", `joining its enclosing scopes`, `" > "`,
+				"Do not list their cases",
+				"helper functions", "setup and teardown hooks",
 				"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
 			},
 		},
 		{
-			name:        "test granularity asks for table rows and subtests as leaves",
+			name:        "test granularity asks for each case as its own leaf",
 			granularity: rule.GranularityTest,
 			want: []string{
-				"a case in a table", "t.Run", `"TestFunction (case name)"`,
+				"smallest thing this file's framework runs",
+				"one row of a table of cases", "parametrised argument set",
+				`"Name (case name)"`, "Parser > Address > ParsesHostBeforeColon",
 				"#01", "built at run time",
 				"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
 			},
@@ -457,8 +494,8 @@ func TestBuildVerdictPrompt(t *testing.T) {
 	}{
 		{"names the key to answer under", "the key to answer under"},
 		{"judges the unit as written rather than the key", "as written on the left"},
-		{"lists the plain function unit against itself", "- TestParsesHost   ->   TestParsesHost"},
-		{"lists the leaf unit against its key", "- TestRejectsPort (empty input)   ->   TestRejectsPort.empty_input"},
+		{"lists the plain function unit against itself", "- TestParsesHost   ->   " + keyOf("TestParsesHost")},
+		{"lists the leaf unit against its key", "- TestRejectsPort (empty input)   ->   " + keyOf("TestRejectsPort (empty input)")},
 		{"names the test file", "pkg/parser_test.go"},
 		{"carries the test file contents", "func TestParsesHost(t *testing.T) {}"},
 		{"names the source file", "pkg/parser.go"},
@@ -555,52 +592,74 @@ func TestUnitsFor(t *testing.T) {
 		want  []Unit
 	}{
 		{
-			name:  "a plain test function answers under its own name",
+			name:  "a plain test is snake cased behind its digest",
 			names: []string{"TestParsesHost"},
-			want:  []Unit{{Name: "TestParsesHost", Key: "TestParsesHost"}},
+			want:  []Unit{{Name: "TestParsesHost", Key: "668ba077.test_parses_host"}},
 		},
 		{
-			name:  "a case name is snake cased behind the function name",
+			name:  "a case answers under a part of its own",
 			names: []string{"TestParseConfig (extracts host before colon)"},
-			want:  []Unit{{Name: "TestParseConfig (extracts host before colon)", Key: "TestParseConfig.extracts_host_before_colon"}},
+			want: []Unit{{
+				Name: "TestParseConfig (extracts host before colon)",
+				Key:  "0f931c49.test_parse_config.extracts_host_before_colon",
+			}},
 		},
 		{
 			name:  "punctuation and repeated spaces collapse to one separator",
 			names: []string{"TestParse (rejects a 24:00 clock -- politely)"},
-			want:  []Unit{{Name: "TestParse (rejects a 24:00 clock -- politely)", Key: "TestParse.rejects_a_24_00_clock_politely"}},
+			want: []Unit{{
+				Name: "TestParse (rejects a 24:00 clock -- politely)",
+				Key:  "64a33088.test_parse.rejects_a_24_00_clock_politely",
+			}},
 		},
 		{
-			name:  "two cases that normalise alike are kept apart",
+			name:  "an acronym breaks where the word after it begins",
+			names: []string{"TestParseHTTPHeader"},
+			want:  []Unit{{Name: "TestParseHTTPHeader", Key: "f19c5fb9.test_parse_http_header"}},
+		},
+		{
+			name:  "enclosing scopes each answer under a part of their own",
+			names: []string{"Parser > Address > ParsesHostBeforeColon"},
+			want: []Unit{{
+				Name: "Parser > Address > ParsesHostBeforeColon",
+				Key:  "6db0dea6.parser.address.parses_host_before_colon",
+			}},
+		},
+		{
+			name:  "two cases that normalise alike are still told apart by their digests",
 			names: []string{"TestParse (empty input)", "TestParse (empty  input)"},
 			want: []Unit{
-				{Name: "TestParse (empty input)", Key: "TestParse.empty_input"},
-				{Name: "TestParse (empty  input)", Key: "TestParse.empty_input-01"},
+				{Name: "TestParse (empty input)", Key: "f87e09ec.test_parse.empty_input"},
+				{Name: "TestParse (empty  input)", Key: "9b14db0e.test_parse.empty_input"},
 			},
 		},
 		{
 			name:  "a case with nothing to normalise still gets a key",
 			names: []string{"TestParse (!!!)"},
-			want:  []Unit{{Name: "TestParse (!!!)", Key: "TestParse.case"}},
+			want:  []Unit{{Name: "TestParse (!!!)", Key: "bd3bd338.test_parse"}},
 		},
 		{
-			name:  "a file path is sanitised into the key character set",
+			name:  "a path answers with one part per segment",
 			names: []string{"internal/parser/parser_test.go"},
-			want:  []Unit{{Name: "internal/parser/parser_test.go", Key: "internal_parser_parser_test.go"}},
+			want: []Unit{{
+				Name: "internal/parser/parser_test.go",
+				Key:  "9c4e1a77.internal.parser.parser_test_go",
+			}},
 		},
 		{
-			name:  "a key longer than the API allows is cut to the ceiling",
+			name:  "a name longer than the API allows keeps whole trailing parts",
 			names: []string{"TestSelftestStillPrintsItsTable (when the model cannot be reached at all today)"},
 			want: []Unit{{
 				Name: "TestSelftestStillPrintsItsTable (when the model cannot be reached at all today)",
-				Key:  "TestSelftestStillPrintsItsTable.when_the_model_cannot_be_reached",
+				Key:  "57fe9293.when_the_model_cannot_be_reached_at_all_today",
 			}},
 		},
 		{
 			name:  "the same function with different cases keeps them distinct",
 			names: []string{"TestParse (accepts a port)", "TestParse (rejects a port)"},
 			want: []Unit{
-				{Name: "TestParse (accepts a port)", Key: "TestParse.accepts_a_port"},
-				{Name: "TestParse (rejects a port)", Key: "TestParse.rejects_a_port"},
+				{Name: "TestParse (accepts a port)", Key: "03d3c518.test_parse.accepts_a_port"},
+				{Name: "TestParse (rejects a port)", Key: "cf7f6e6d.test_parse.rejects_a_port"},
 			},
 		},
 	}
@@ -635,7 +694,7 @@ func TestVerdictSchemaForNamesEveryKeyAndForbidsAnyOther(t *testing.T) {
 		t.Fatalf("schema is not valid JSON: %v", err)
 	}
 
-	wantKeys := []string{"TestParsesHost", "TestParse.empty_input"}
+	wantKeys := []string{keyOf("TestParsesHost"), keyOf("TestParse (empty input)")}
 	if !slices.Equal(slices.Sorted(maps.Keys(schema.Properties)), slices.Sorted(slices.Values(wantKeys))) {
 		t.Errorf("properties = %v, want %v", slices.Sorted(maps.Keys(schema.Properties)), wantKeys)
 	}
@@ -651,5 +710,163 @@ func TestVerdictSchemaForEscapesAKeyRatherThanBreakingTheJSON(t *testing.T) {
 	raw := VerdictSchemaFor([]Unit{{Name: `Test"quoted`, Key: `Test_quoted`}})
 	if !json.Valid(raw) {
 		t.Fatalf("schema is not valid JSON: %s", raw)
+	}
+}
+
+// TestVerdictSchemaCarriesAdditionalPropertiesOnlyOnObjects guards a defect that
+// costs a whole call and reports as an unreliable model rather than as a bad
+// schema: the CLI validates in strict mode, and additionalProperties beside a
+// string or a boolean fails that validation, so every retry fails the same way
+// and the target comes back as could-not-run.
+func TestVerdictSchemaCarriesAdditionalPropertiesOnlyOnObjects(t *testing.T) {
+	tests := []struct {
+		name  string
+		names []string
+	}{
+		{name: "one plain unit", names: []string{"TestParsesHost"}},
+		{name: "a leaf carrying a case", names: []string{"TestParse (empty input)"}},
+		{name: "a namespaced leaf", names: []string{"formatDate > pads days (2026-01-05)"}},
+		{name: "several units", names: []string{"TestParsesHost", "TestParse (empty input)", "TestParse (blank input)"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var node any
+			if err := json.Unmarshal(VerdictSchemaFor(UnitsFor(tc.names)), &node); err != nil {
+				t.Fatalf("schema is not valid JSON: %v", err)
+			}
+
+			for path, kind := range typedNodesIn(node, "#") {
+				_, isConstrained := kind["additionalProperties"]
+				if kind["type"] != "object" && isConstrained {
+					t.Errorf("%s is a %v and still carries additionalProperties", path, kind["type"])
+				}
+				if kind["type"] == "object" && !isConstrained {
+					t.Errorf("%s is an object that would accept a unit nobody enumerated", path)
+				}
+			}
+		})
+	}
+}
+
+// typedNodesIn walks every schema node carrying a type, keyed by its JSON pointer.
+func typedNodesIn(node any, path string) map[string]map[string]any {
+	found := map[string]map[string]any{}
+	object, isObject := node.(map[string]any)
+	if !isObject {
+		return found
+	}
+	if _, isTyped := object["type"]; isTyped {
+		found[path] = object
+	}
+	properties, hasProperties := object["properties"].(map[string]any)
+	if !hasProperties {
+		return found
+	}
+	for name, child := range properties {
+		maps.Copy(found, typedNodesIn(child, path+"/properties/"+name))
+	}
+	return found
+}
+
+// TestUnitsAtFileGranularityAnswerUnderAKeyThatSurvivesBeingAToolParameter
+// covers the shape that made a whole call unanswerable. The CLI turns each
+// top-level schema property into a tool parameter; a path cut to the ceiling is
+// neither unique across files under one long directory nor legible, and a cut
+// landing on a separator fails that derivation outright.
+func TestUnitsAtFileGranularityAnswerUnderAKeyThatSurvivesBeingAToolParameter(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		want string
+	}{
+		{
+			name: "a short path stays readable in full",
+			file: "internal/lib/vote/vote_test.go",
+			want: "6eb1c941.internal.lib.vote.vote_test_go",
+		},
+		{
+			name: "a path over the ceiling keeps the file name behind a digest",
+			file: "rules/no-gaps/fixtures/fail-go-insufficient-funds-never-reached/withdraw_test.go",
+			want: "588ab92e.withdraw_test_go",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			units := UnitsAt(rule.GranularityFile, tc.file, nil)
+
+			if len(units) != 1 {
+				t.Fatalf("UnitsAt() returned %d units, want the file as one", len(units))
+			}
+			if units[0].Name != tc.file {
+				t.Errorf("unit name = %q, want the path the report prints", units[0].Name)
+			}
+			if units[0].Key != tc.want {
+				t.Errorf("key = %q, want %q", units[0].Key, tc.want)
+			}
+			if len(units[0].Key) > maxKeyLength {
+				t.Errorf("key %q is %d chars, over the ceiling of %d", units[0].Key, len(units[0].Key), maxKeyLength)
+			}
+		})
+	}
+}
+
+// TestKeysStayUniqueWhereTruncationWouldNot is the reason a digest beats a cut:
+// two files under one long directory reduce to the same prefix, and a schema
+// cannot carry the same property twice.
+func TestKeysStayUniqueWhereTruncationWouldNot(t *testing.T) {
+	const dir = "rules/no-redundancy/fixtures/pass-go-boundary-pair-at-and-past-limit/"
+
+	units := UnitsFor([]string{dir + "retention_test.go", dir + "expiry_test.go"})
+
+	if units[0].Key == units[1].Key {
+		t.Errorf("both files answer under %q, so one verdict would overwrite the other", units[0].Key)
+	}
+	for _, unit := range units {
+		if len(unit.Key) > maxKeyLength {
+			t.Errorf("key %q is %d chars, over the ceiling of %d", unit.Key, len(unit.Key), maxKeyLength)
+		}
+	}
+}
+
+// TestKeysNeverEndOnASeparator guards the shape that made a whole call
+// unanswerable: the CLI turns each top-level schema property into a tool
+// parameter, and a name at the length ceiling ending in a separator fails that
+// derivation, leaving a placeholder parameter the model cannot satisfy.
+func TestKeysNeverEndOnASeparator(t *testing.T) {
+	tests := []struct {
+		name  string
+		unit  string
+		wantK string
+	}{
+		{
+			name:  "a path over the ceiling never opens mid-word",
+			unit:  "rules/no-gaps/fixtures/fail-go-insufficient-funds-never-reached/withdraw_test.go",
+			wantK: "588ab92e.withdraw_test_go",
+		},
+		{
+			name:  "a case name ending in punctuation keeps nothing trailing",
+			unit:  "TestParse (rejects blank input --)",
+			wantK: "2c87c8a7.test_parse.rejects_blank_input",
+		},
+		{
+			name:  "a case that normalises to nothing leaves no separator behind it",
+			unit:  "TestParse (!!!)",
+			wantK: "bd3bd338.test_parse",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := UnitsFor([]string{tc.unit})[0].Key
+
+			if got != tc.wantK {
+				t.Errorf("key = %q, want %q", got, tc.wantK)
+			}
+			if strings.HasSuffix(got, "_") || strings.HasSuffix(got, "-") || strings.HasSuffix(got, ".") {
+				t.Errorf("key %q ends on a separator", got)
+			}
+		})
 	}
 }

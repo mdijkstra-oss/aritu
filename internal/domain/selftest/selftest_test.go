@@ -32,8 +32,8 @@ func TestHolds(t *testing.T) {
 		{"fail fixture at zero", rule.ExpectFail, map[string]int{"TestA": 0, "TestB": 0}, 4, true},
 		{"fail fixture with one dissenting vote", rule.ExpectFail, map[string]int{"TestA": 1, "TestB": 0}, 4, false},
 		{"fail fixture at votes", rule.ExpectFail, map[string]int{"TestA": 4, "TestB": 4}, 4, false},
-		{"pass fixture with no test functions", rule.ExpectPass, map[string]int{}, 4, false},
-		{"fail fixture with no test functions", rule.ExpectFail, map[string]int{}, 4, false},
+		{"pass fixture with no tests", rule.ExpectPass, map[string]int{}, 4, false},
+		{"fail fixture with no tests", rule.ExpectFail, map[string]int{}, 4, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -204,8 +204,14 @@ func TestRun(t *testing.T) {
 		Model: "sonnet",
 	}
 	ask := askFrom(map[string]reply{
-		"TestGood": {names: `{"names":["TestGood"]}`, verdicts: `{"TestGood":{"satisfies":true,"reason":""}}`},
-		"TestBad":  {names: `{"names":["TestBad"]}`, verdicts: `{"TestBad":{"satisfies":false,"reason":"names the unit"}}`},
+		"TestGood": {
+			names:    `{"names":["TestGood"]}`,
+			verdicts: fmt.Sprintf(`{%q:{"satisfies":true,"reason":""}}`, keyOf(t, "TestGood")),
+		},
+		"TestBad": {
+			names:    `{"names":["TestBad"]}`,
+			verdicts: fmt.Sprintf(`{%q:{"satisfies":false,"reason":"names the unit"}}`, keyOf(t, "TestBad")),
+		},
 	})
 
 	results := Run(context.Background(), ask, opts, fixtures)
@@ -289,4 +295,12 @@ func askFrom(replies map[string]reply) claudecli.Ask {
 
 func isNamesCall(req claudecli.Request) bool {
 	return strings.Contains(string(req.Schema), `"names"`)
+}
+
+// keyOf derives the property a unit answers under the same way the code under test
+// does, so a canned verdict here tracks the key derivation rather than restating
+// one spelling of it.
+func keyOf(t *testing.T, name string) string {
+	t.Helper()
+	return lint.UnitsFor([]string{name})[0].Key
 }

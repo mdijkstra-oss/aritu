@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
+	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/lib/claudecli"
@@ -106,10 +109,11 @@ func NeedsEnumeration(granularity rule.Granularity) bool {
 	return granularity != rule.GranularityFile
 }
 
-// UnitsAt narrows a file's leaves to the units one rule judges. A function that
+// UnitsAt narrows a file's leaves to the units one rule judges. A test that
 // declares no cases appears in the leaf list as its bare name and one that declares
-// cases appears once per case, so the distinct function halves are exactly the set
-// of test functions — the roll-up is a string split rather than a second question.
+// cases appears once per case, so the distinct halves in front of the case are
+// exactly the set of tests — the roll-up is a string split rather than a second
+// question.
 func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit {
 	switch granularity {
 	case rule.GranularityFile:
@@ -224,34 +228,52 @@ var namesPrompts = map[rule.Granularity]func(SourceFile) string{
 	rule.GranularityTest:     buildTestNamesPrompt,
 }
 
+// levelsPreamble defines the two levels by the role a construct plays rather than
+// by the syntax that declares it, because the syntax differs in every ecosystem
+// and the role does not. Both prompts open with it so that neither can drift into
+// describing one ecosystem's spelling.
+const levelsPreamble = `A **test** is the smallest thing this file's framework runs and reports under its own name.
+
+An **enclosing scope** is anything that groups tests and qualifies their names without being run as a test itself: a grouping block, a suite, a fixture class, a module. Scopes are namespaces, not tests.
+
+A **case** is one leaf of a single test: one row of a table of cases, one generated or parametrised argument set, or one subdivision declared inside the test body. A case is not a test of its own; it is one execution of one test.
+
+Write a name by joining its enclosing scopes, outermost first, with " > ", then the test's own name. A test declared at the top level of the file has no scopes and is written alone.
+`
+
 func buildFunctionNamesPrompt(test SourceFile) string {
 	var b strings.Builder
-	b.WriteString("List every test function declared in the Go test file below.\n\n")
-	b.WriteString("A test function is a top-level func whose name begins with Test and which takes a single *testing.T parameter.\n\n")
+	b.WriteString("List every test declared in the test file below.\n\n")
+	b.WriteString(levelsPreamble)
+	b.WriteString("\nList the tests. Do not list their cases: a test that runs twenty rows is still one entry here.\n\n")
 	b.WriteString("Do not list any of the following:\n")
-	b.WriteString("- helper functions, including helpers that take *testing.T\n")
-	b.WriteString("- struct types or literals holding table cases, and the names of those cases\n")
-	b.WriteString("- subtest closures passed to t.Run, however they are named\n")
-	b.WriteString("- benchmarks, fuzz targets and examples\n\n")
-	b.WriteString("Report each name exactly as declared, in declaration order.\n\n")
+	b.WriteString("- helper functions, including ones that make assertions or take the framework's test handle\n")
+	b.WriteString("- setup and teardown hooks, and lifecycle methods the framework calls around tests\n")
+	b.WriteString("- enclosing scopes on their own; they appear only as the prefix of a test's name\n")
+	b.WriteString("- the type, class or literal holding a table of cases, and the names of those cases\n")
+	b.WriteString("- benchmarks, fuzz targets, property generators and documentation examples\n\n")
+	b.WriteString("Take every name exactly as written in the source. Report in declaration order.\n\n")
 	b.WriteString(formatFileBlock(test))
 	return b.String()
 }
 
 func buildTestNamesPrompt(test SourceFile) string {
 	var b strings.Builder
-	b.WriteString("List every test unit in the Go test file below.\n\n")
-	b.WriteString("A test unit is one leaf that can fail on its own and be named:\n")
-	b.WriteString("- a case in a table, named by its name field or by its map key\n")
-	b.WriteString("- a subtest declared with t.Run\n")
-	b.WriteString("- a top-level func Test* that declares neither, which is one unit by itself\n\n")
-	b.WriteString("Write a leaf inside a test function as \"TestFunction (case name)\", taking the case name exactly as it appears in the source. Write a test function that declares no cases as just \"TestFunction\".\n\n")
-	b.WriteString("When two cases in one function share a name, disambiguate the second and later ones the way Go does, by appending #01, #02 and so on.\n\n")
+	b.WriteString("List every unit in the test file below that can fail on its own and be named.\n\n")
+	b.WriteString(levelsPreamble)
+	b.WriteString("\nA unit is one case, written as \"Name (case name)\" with the case name exactly as it appears in the source. A test that declares no cases is one unit by itself, written as just \"Name\". In both, \"Name\" is the scope-joined name above.\n\n")
+	b.WriteString("Examples of the shape, not of any one ecosystem's syntax:\n")
+	b.WriteString("- a test with no cases, no scopes                ->  ParsesHostBeforeColon\n")
+	b.WriteString("- the same test inside two scopes               ->  Parser > Address > ParsesHostBeforeColon\n")
+	b.WriteString("- a test whose cases are named in a table       ->  ParseAddress (rejects blank input)\n")
+	b.WriteString("- a scoped test whose cases are parametrised    ->  Parser > ParseAddress (port above the maximum)\n\n")
+	b.WriteString("When two cases under one test share a name, keep the first as written and append #01, #02 and so on to the later ones.\n\n")
 	b.WriteString("Do not list any of the following:\n")
-	b.WriteString("- helper functions, including helpers that take *testing.T\n")
-	b.WriteString("- the struct type or the field names of a table, only its cases\n")
-	b.WriteString("- benchmarks, fuzz targets and examples\n")
-	b.WriteString("- cases whose name is built at run time rather than written in the source; when a function's cases cannot be named from the source, list that function itself as one unit\n\n")
+	b.WriteString("- helper functions, including ones that make assertions or take the framework's test handle\n")
+	b.WriteString("- setup and teardown hooks, and lifecycle methods the framework calls around tests\n")
+	b.WriteString("- the type, class or literal holding a table of cases, or its field names; only its cases\n")
+	b.WriteString("- benchmarks, fuzz targets, property generators and documentation examples\n")
+	b.WriteString("- cases whose name is built at run time rather than written in the source; when a test's cases cannot be named from the source, list that test itself as one unit\n\n")
 	b.WriteString("Report units in declaration order.\n\n")
 	b.WriteString(formatFileBlock(test))
 	return b.String()
@@ -282,9 +304,9 @@ func readFiles(r rule.Rule, testPath string) ([]SourceFile, error) {
 		return []SourceFile{test}, nil
 	}
 
-	sourcePath, isTestFile := rule.SourcePathFor(testPath)
-	if !isTestFile {
-		return nil, fmt.Errorf("rule %s needs the file under test but %s is not a Go test file", r.Name, testPath)
+	sourcePath, err := rule.FindSource(testPath)
+	if err != nil {
+		return nil, fmt.Errorf("rule %s needs the file under test: %w", r.Name, err)
 	}
 	source, err := readSourceFile(sourcePath)
 	if err != nil {
@@ -309,12 +331,12 @@ func askNames(ctx context.Context, ask claudecli.Ask, opts Options, test SourceF
 		Schema: json.RawMessage(NamesSchema),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing test functions in %s: %w", test.Path, err)
+		return nil, fmt.Errorf("listing the tests in %s: %w", test.Path, err)
 	}
 
 	var reply namesReply
 	if err := json.Unmarshal(raw, &reply); err != nil {
-		return nil, fmt.Errorf("reading test function names for %s: %w", test.Path, err)
+		return nil, fmt.Errorf("reading the test names for %s: %w", test.Path, err)
 	}
 	if duplicate, hasDuplicate := findDuplicate(reply.Names); hasDuplicate {
 		return nil, fmt.Errorf("test unit %q listed more than once in %s", duplicate, test.Path)
@@ -435,25 +457,11 @@ func formatFileBlock(f SourceFile) string {
 	return fmt.Sprintf("=== FILE: %s ===\n%s\n=== END FILE: %s ===\n", f.Path, f.Content, f.Path)
 }
 
-// UnitsFor derives the key each enumerated identifier is answered under. The test
-// function name is kept verbatim and only the case name is normalised, because the
-// case is the half carrying arbitrary prose.
-//
-// Two cases in one function can normalise alike — "empty input" and "empty  input"
-// both reach empty_input, and truncation to the API's 64-character ceiling creates
-// more. Left alone the second would overwrite the first while the
-// schema is built, so a unit would vanish from the run with every count still
-// looking healthy. Suffixing mirrors what Go does for duplicate subtest names.
+// UnitsFor derives the key each enumerated identifier is answered under.
 func UnitsFor(names []string) []Unit {
 	units := make([]Unit, 0, len(names))
-	taken := make(map[string]int, len(names))
 	for _, name := range names {
-		key := keyFor(name)
-		if seen := taken[key]; seen > 0 {
-			key = fmt.Sprintf("%s-%02d", truncateKey(key, maxKeyLength-3), seen)
-		}
-		taken[keyFor(name)]++
-		units = append(units, Unit{Name: name, Key: key})
+		units = append(units, Unit{Name: name, Key: keyFor(name)})
 	}
 	return units
 }
@@ -463,56 +471,134 @@ func UnitsFor(names []string) []Unit {
 // dropped and invented units stop being errors this package has to detect and
 // become schema violations the CLI retries on its own.
 func VerdictSchemaFor(units []Unit) json.RawMessage {
-	schema := objectSchema{
-		Type:                 "object",
-		Properties:           make(map[string]objectSchema, len(units)),
-		Required:             make([]string, 0, len(units)),
-		AdditionalProperties: false,
-	}
+	answers := make(map[string]schemaNode, len(units))
+	keys := make([]string, 0, len(units))
 	for _, unit := range units {
-		schema.Properties[unit.Key] = answerSchema()
-		schema.Required = append(schema.Required, unit.Key)
+		answers[unit.Key] = answerSchema()
+		keys = append(keys, unit.Key)
 	}
-	encoded, err := json.Marshal(schema)
+	encoded, err := json.Marshal(closedObject(answers, keys))
 	if err != nil {
 		panic(fmt.Sprintf("the verdict schema failed to marshal, which its types make impossible: %v", err))
 	}
 	return encoded
 }
 
-type objectSchema struct {
-	Type                 string                  `json:"type"`
-	Properties           map[string]objectSchema `json:"properties,omitempty"`
-	Required             []string                `json:"required,omitempty"`
-	AdditionalProperties bool                    `json:"additionalProperties"`
+// schemaNode is one node of a generated JSON Schema. AdditionalProperties is a
+// pointer because the keyword only means anything on an object: emitted beside a
+// string or a boolean it fails the CLI's strict validation, and the whole call
+// then comes back as retries exhausted rather than as a rejected schema — a
+// could-not-run that looks like an unreliable model.
+type schemaNode struct {
+	Type                 string                `json:"type"`
+	Properties           map[string]schemaNode `json:"properties,omitempty"`
+	Required             []string              `json:"required,omitempty"`
+	AdditionalProperties *bool                 `json:"additionalProperties,omitempty"`
 }
 
-func answerSchema() objectSchema {
-	return objectSchema{
-		Type: "object",
-		Properties: map[string]objectSchema{
-			"satisfies": {Type: "boolean"},
-			"reason":    {Type: "string"},
-		},
-		Required:             []string{"satisfies", "reason"},
-		AdditionalProperties: false,
+// closedObject is an object that may carry no key beyond the ones named, which is
+// what turns a duplicated, dropped or invented unit into a schema violation the
+// CLI retries rather than an error this package has to detect.
+func closedObject(properties map[string]schemaNode, required []string) schemaNode {
+	isClosed := false
+	return schemaNode{
+		Type:                 "object",
+		Properties:           properties,
+		Required:             required,
+		AdditionalProperties: &isClosed,
 	}
 }
 
+func answerSchema() schemaNode {
+	return closedObject(map[string]schemaNode{
+		"satisfies": {Type: "boolean"},
+		"reason":    {Type: "string"},
+	}, []string{"satisfies", "reason"})
+}
+
+// keyFor derives the property a unit answers under: a digest of the whole name,
+// then a normalised form of the name a reader can recognise.
+//
+// Uniqueness rides entirely on the digest, which is what lets the readable half be
+// cut to fit the API's ceiling. Cutting a readable key on its own is the wrong
+// answer twice over: the prefix that survives is neither unique — two files under
+// one long directory reduce to the same string — nor legible, and dropping a unit's
+// own property would hand it a neighbour's verdict with every count still looking
+// healthy.
 func keyFor(name string) string {
+	digest := fmt.Sprintf("%08x", fnv1aOf(name))
+	readable := fitParts(partsOf(name), maxKeyLength-len(digest)-1)
+	if readable == "" {
+		return digest
+	}
+	return digest + "." + readable
+}
+
+// partsOf breaks a unit name into the parts a key joins with ".": the segments of a
+// path, the enclosing scopes of a test, and the case in the trailing parenthesis.
+// Each part is normalised on its own, so a separator in the source can never
+// survive as a run of underscores in the key.
+func partsOf(name string) []string {
 	function, caseName, hasCase := splitUnit(name)
-	key := sanitiseKey(function)
+	raw := strings.FieldsFunc(function, isPartBoundary)
 	if hasCase {
-		normalised := snakeCase(caseName)
-		if normalised == "" {
-			normalised = "case"
+		raw = append(raw, caseName)
+	}
+	parts := make([]string, 0, len(raw))
+	for _, part := range raw {
+		if normalised := snakeCase(part); normalised != "" {
+			parts = append(parts, normalised)
 		}
-		key += "." + normalised
 	}
-	if key == "" {
-		key = "unit"
+	return parts
+}
+
+func isPartBoundary(r rune) bool {
+	return r == '/' || r == '\\' || r == '>'
+}
+
+// fitParts keeps as many whole trailing parts as the budget allows. The tail is the
+// half a reader recognises — the file name, the case that failed — so whole parts
+// are dropped from the front before a single part is cut at all, and a part is only
+// opened mid-word when one part alone is over the budget.
+func fitParts(parts []string, budget int) string {
+	if len(parts) == 0 || budget <= 0 {
+		return ""
 	}
-	return truncateKey(key, maxKeyLength)
+	kept := 0
+	length := 0
+	for _, part := range slices.Backward(parts) {
+		grown := length + len(part)
+		if kept > 0 {
+			grown++
+		}
+		if grown > budget {
+			break
+		}
+		length = grown
+		kept++
+	}
+	if kept == 0 {
+		return trimSeparators(lastChars(parts[len(parts)-1], budget))
+	}
+	return strings.Join(parts[len(parts)-kept:], ".")
+}
+
+func fnv1aOf(text string) uint32 {
+	digest := fnv.New32a()
+	digest.Write([]byte(text))
+	return digest.Sum32()
+}
+
+func lastChars(text string, count int) string {
+	if len(text) <= count {
+		return text
+	}
+	return text[len(text)-count:]
+}
+
+func trimSeparators(key string) string {
+	return strings.Trim(key, keySeparators)
 }
 
 // maxKeyLength and the character set below are the API's, not ours: a schema
@@ -521,58 +607,73 @@ func keyFor(name string) string {
 // be the identifier a reader sees.
 const maxKeyLength = 64
 
-func sanitiseKey(text string) string {
-	var b strings.Builder
-	for _, r := range text {
-		if isKeyRune(r) {
-			b.WriteRune(r)
-			continue
-		}
-		b.WriteByte('_')
-	}
-	return b.String()
-}
+// keySeparators may sit inside a key but never at its end. The CLI derives one
+// tool parameter per top-level schema property, and a name at the ceiling that
+// ends on one fails that derivation: the parameter becomes an unsubstituted
+// placeholder, and no reply can satisfy it however correct the answer.
+//
+// Each separator carries one level of the name: "." between the parts, "_" between
+// the words of one part. A colon would read better in front of the digest, but the
+// character set above does not permit one.
+const keySeparators = "_-."
 
-func isKeyRune(r rune) bool {
-	switch {
-	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		return true
-	case r == '_', r == '.', r == '-':
-		return true
-	default:
-		return false
-	}
-}
-
-func truncateKey(key string, limit int) string {
-	if len(key) <= limit {
-		return key
-	}
-	return key[:limit]
-}
-
+// splitUnit separates the test from the case a leaf name carries. It takes the
+// last " (" rather than the first because the half in front of it is a namespace
+// path of arbitrary prose — a grouping block may be named "Parser (v2)" — while the
+// case is always the trailing parenthesis the enumeration appended.
 func splitUnit(name string) (function, caseName string, hasCase bool) {
-	open := strings.Index(name, " (")
+	open := strings.LastIndex(name, " (")
 	if open < 0 || !strings.HasSuffix(name, ")") {
 		return name, "", false
 	}
 	return name[:open], name[open+2 : len(name)-1], true
 }
 
+// snakeCase normalises one part. Camel and acronym boundaries become word breaks,
+// anything outside the key's character set collapses to a single underscore however
+// much of it there was, and no underscore survives at either end. Normalising a
+// part on its own is what keeps "a > b" from reaching the key as three separators.
 func snakeCase(text string) string {
 	var b strings.Builder
+	runes := []rune(text)
 	pendingSeparator := false
-	for _, r := range strings.ToLower(text) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			if pendingSeparator && b.Len() > 0 {
-				b.WriteByte('_')
-			}
-			pendingSeparator = false
-			b.WriteRune(r)
-		default:
+	for at, r := range runes {
+		if !isWordRune(r) {
 			pendingSeparator = true
+			continue
 		}
+		if b.Len() > 0 && (pendingSeparator || startsWord(runes, at)) {
+			b.WriteByte('_')
+		}
+		pendingSeparator = false
+		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
+}
+
+// startsWord reports whether the rune at an index opens a new word inside a run of
+// letters, so that ParseHTTPHeader breaks into parse, http and header rather than
+// reaching the key as one unreadable word.
+//
+// A capital followed by a lower-case letter closes whatever ran into it, which is
+// what separates the acronym in ParseHTTPHeader from the word after it. The same
+// rule splits IPv6 into i_pv6, and that is the better trade: telling those apart
+// needs a dictionary, and the alternative merges the far more common DoesAThing
+// into does_athing.
+func startsWord(runes []rune, at int) bool {
+	if at == 0 || !unicode.IsUpper(runes[at]) {
+		return false
+	}
+	previous := runes[at-1]
+	if unicode.IsLower(previous) || unicode.IsDigit(previous) {
+		return true
+	}
+	return unicode.IsUpper(previous) && at+1 < len(runes) && unicode.IsLower(runes[at+1])
+}
+
+// isWordRune is deliberately ASCII: a rune outside this set becomes a separator
+// rather than being lowercased into the key, which is what guarantees every key
+// matches the character set the API accepts.
+func isWordRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }

@@ -75,26 +75,35 @@ So normalisation is not cosmetic, it is what makes the key legal at all. Colons,
 slashes and spaces are all out, which rules out both the raw identifier and a file
 path used verbatim.
 
-`<TestFuncName>.<case name, snake_cased>`, and the bare function name where a test
-declares no cases. A dot separates the halves because a colon is not permitted.
-Anything still outside the character set becomes `_`, and the result is cut to 64.
+`<digest>.<part>.<part>…`: an eight-character FNV-1a digest of the whole name,
+then the name normalised into parts. A dot separates them because a colon is not
+permitted, which is also why the digest is not simply prefixed with one.
 
-The function name is kept verbatim. Only the case name is normalised, because it
-is the half that carries arbitrary prose.
+**The parts are the structure the name already has.** A path splits on its
+separators, a test splits on its enclosing scopes, and a case becomes a part of its
+own behind the test. Each part is normalised alone — camel and acronym boundaries
+become word breaks, anything outside the character set collapses to a single `_`
+however much of it there was, and no `_` survives at either end of a part. Normalising
+per part is what stops `a > b` reaching the key as three underscores in a row.
+
+`Parser > ParseAddress (rejects blank input)` therefore reaches the schema as
+`0f931c49.parser.parse_address.rejects_blank_input`.
+
+**The digest carries uniqueness so the readable half does not have to.** Cutting a
+readable key on its own is wrong twice over: the surviving prefix is not unique —
+two files under one long directory reduce to the same string — and it is not
+legible. With the digest in front, the readable half is free to be cut to fit: whole
+parts are dropped from the front until the rest fits, since the tail is the half a
+reader recognises, and a part is only opened mid-word when one part alone is over
+the budget.
+
+**No collision suffix.** Distinct names cannot collide, because the digest is taken
+over the whole name and duplicate names are already rejected upstream by the
+enumeration check. This replaces the earlier `-01` scheme, which existed only
+because keys were derived from a lossy normalisation with no digest behind it.
 
 **No filename prefix.** The request already covers exactly one file, so a filename
 scopes nothing and costs tokens on every key.
-
-**Collisions get `-01`.** Two cases in one function can normalise to the same key —
-`"empty input"` and `"empty  input"` both reach `empty_input` — and cutting to 64
-characters creates more, since long case names in one function tend to share a
-prefix. Truncation is in fact the likelier source of the two. Left alone the second
-overwrites the first while building the schema, `required` lists one key where two
-units exist, and a test silently vanishes from the run with every count still
-looking healthy. That is precisely the silent drop the mismatch check was written
-to prevent, reintroduced through the back door. Append `-01`, `-02` on collision. Go uses `#01` for duplicate subtest names, but
-`#` is outside the permitted character set, and a hyphen never appears in a
-snake-cased key so it stays unambiguous.
 
 ### The judged text stays the original
 

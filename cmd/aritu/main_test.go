@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/matthijn/aritu/internal/domain/lint"
+	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/domain/run"
 )
 
@@ -713,10 +715,10 @@ case "$schema" in
 		printf '{"structured_output":{"names":["TestDoesAThing"]}}\n'
 		;;
 	*)
-		printf '{"structured_output":{"TestDoesAThing":{"satisfies":%t,"reason":"names the input the case supplies"}}}\n'
+		printf '{"structured_output":{"%s":{"satisfies":%t,"reason":"names the input the case supplies"}}}\n'
 		;;
 esac
-`, satisfies))
+`, lint.UnitsFor([]string{"TestDoesAThing"})[0].Key, satisfies))
 }
 
 func writeScript(t *testing.T, body string) string {
@@ -752,4 +754,125 @@ func orDefault(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// bannedWords never appear in anything aritu says to a model or shows a person.
+// Naming a language asks a model to look for something a file in another language
+// cannot contain, and that is the whole of what made the original rule set a Go
+// rule set. Matching is whole-word and case-sensitive, so "golden" and "goes" are
+// unaffected.
+var bannedWords = []string{
+	"Go", "Golang", "Java", "JavaScript", "TypeScript", "Python", "Ruby", "Kotlin",
+	"Rust", "Jest", "Vitest", "JUnit", "Mocha", "RSpec", "PHPUnit", "NUnit",
+	"pytest", "unittest", "Mockito", "Jasmine", "Cypress",
+}
+
+// bannedFragments are one ecosystem's spellings. Prose carrying them is describing
+// syntax where it should be describing a role.
+var bannedFragments = []string{
+	"testing.T", "t.Run", "func Test", "_test.go", "@Test", "describe(",
+	"assertEquals", "parametrize", "@ParameterizedTest", "self.assert",
+}
+
+// shippedRulesDir is the rule set this repository ships, read from disk rather
+// than rebuilt in a temp directory: a prompt that quietly acquires a language is
+// invisible to a test over synthetic input.
+var shippedRulesDir = filepath.Join("..", "..", "rules")
+
+// TestNothingArituSaysNamesALanguage covers every surface where a language could
+// creep back in: the shared prompt, each rule's criterion, both enumeration calls,
+// and the help a person reads. Each is checked in the same place because the list
+// of what may not appear is one list.
+func TestNothingArituSaysNamesALanguage(t *testing.T) {
+	tests := []struct {
+		name string
+		text func(t *testing.T) string
+	}{
+		{
+			name: "the shared base prompt",
+			text: func(t *testing.T) string { return loadBase(t) },
+		},
+		{
+			name: "the enumeration prompt for whole tests",
+			text: func(*testing.T) string { return namesPrompt(rule.GranularityFunction) },
+		},
+		{
+			name: "the enumeration prompt for leaves",
+			text: func(*testing.T) string { return namesPrompt(rule.GranularityTest) },
+		},
+		{
+			name: "the help a person reads",
+			text: func(t *testing.T) string { return helpOutput(t) },
+		},
+	}
+	for _, name := range shippedRuleNames(t) {
+		tests = append(tests, struct {
+			name string
+			text func(t *testing.T) string
+		}{
+			name: "the rule " + name,
+			text: func(t *testing.T) string { return loadRulePrompt(t, name) },
+		})
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text := tc.text(t)
+
+			for _, banned := range bannedWords {
+				if regexp.MustCompile(`\b` + regexp.QuoteMeta(banned) + `\b`).MatchString(text) {
+					t.Errorf("names %q, so it describes one ecosystem rather than the property", banned)
+				}
+			}
+			for _, banned := range bannedFragments {
+				if strings.Contains(text, banned) {
+					t.Errorf("carries the syntax %q, so it describes a spelling rather than a role", banned)
+				}
+			}
+		})
+	}
+}
+
+func shippedRuleNames(t *testing.T) []string {
+	t.Helper()
+	names, err := rule.List(shippedRulesDir)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	return names
+}
+
+func loadBase(t *testing.T) string {
+	t.Helper()
+	base, err := rule.LoadBase(shippedRulesDir)
+	if err != nil {
+		t.Fatalf("LoadBase() error = %v", err)
+	}
+	return base
+}
+
+func loadRulePrompt(t *testing.T, name string) string {
+	t.Helper()
+	loaded, err := rule.Load(shippedRulesDir, name)
+	if err != nil {
+		t.Fatalf("Load(%q) error = %v", name, err)
+	}
+	return loaded.Prompt
+}
+
+// namesPrompt drops the file block, so the prompt is judged on the instructions
+// aritu wrote rather than on the file a caller happened to hand it.
+func namesPrompt(granularity rule.Granularity) string {
+	built := lint.BuildNamesPrompt(granularity, lint.SourceFile{Path: "subject"})
+	instructions, _, _ := strings.Cut(built, "=== FILE:")
+	return instructions
+}
+
+func helpOutput(t *testing.T) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if exit := execute([]string{"--help"}, &stdout, &stderr); exit != lint.ExitPass {
+		t.Fatalf("--help exited %d, stderr %q", exit, stderr.String())
+	}
+	return stdout.String()
 }
