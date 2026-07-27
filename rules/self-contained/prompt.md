@@ -1,4 +1,5 @@
 ---
+include: [tests]
 include_source: false
 granularity: file
 ---

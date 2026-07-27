@@ -27,9 +27,13 @@ func TestAlpha(t *testing.T) {}
 `
 
 var (
-	byBehaviour = rule.Rule{Name: "named-for-behavior", Prompt: "rule body: a name states the behaviour", Granularity: rule.GranularityTest}
+	byBehaviour = rule.Rule{Name: "named-for-behavior", Prompt: "rule body: a name states the behaviour", Granularity: rule.GranularityTestCase}
 	oneReason   = rule.Rule{Name: "one-reason-to-fail", Prompt: "rule body: one reason to fail", Granularity: rule.GranularityFunction}
 	noMocking   = rule.Rule{Name: "no-mocking-under-test", Prompt: "rule body: the real unit is exercised", Granularity: rule.GranularityFunction}
+
+	// otherFragment asks the same file a different question: its prompt carries a
+	// fragment the others do not, so its enumeration is not theirs to share.
+	otherFragment = rule.Rule{Name: "prose-rule", Prompt: "rule body: the prose is legible", Granularity: rule.GranularityFunction, Include: []string{"tests"}}
 )
 
 func TestRun(t *testing.T) {
@@ -73,6 +77,18 @@ func TestRun(t *testing.T) {
 			},
 			wantEnumerations: map[string]int{"alpha_test.go": 1},
 			wantJudgements:   3,
+		},
+		{
+			name:    "rules including different fragments each get their own enumeration",
+			rules:   []rule.Rule{oneReason, otherFragment},
+			targets: []target{alpha},
+			votes:   1,
+			want: []wantResult{
+				{rule: "one-reason-to-fail", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+				{rule: "prose-rule", file: "alpha_test.go", verdicts: map[string]int{"TestAlpha": 1}},
+			},
+			wantEnumerations: map[string]int{"alpha_test.go": 2},
+			wantJudgements:   2,
 		},
 		{
 			name:    "results keep file and rule order when the replies complete out of order",

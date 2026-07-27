@@ -98,7 +98,7 @@ func Enumerate(ctx context.Context, ask claudecli.Ask, opts Options) ([]string, 
 		return nil, err
 	}
 	enumerating := opts
-	enumerating.Rule.Granularity = rule.GranularityTest
+	enumerating.Rule.Granularity = rule.GranularityTestCase
 	return askNames(ctx, ask, enumerating, test)
 }
 
@@ -120,7 +120,7 @@ func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit 
 		return UnitsFor([]string{file})
 	case rule.GranularityFunction:
 		return UnitsFor(distinctFunctions(leaves))
-	case rule.GranularityTest:
+	case rule.GranularityTestCase:
 		return UnitsFor(leaves)
 	default:
 		panic(fmt.Sprintf("unknown granularity: %d", int(granularity)))
@@ -189,11 +189,11 @@ func ExitFor(r Report) Exit {
 
 // BuildNamesPrompt asks the model to enumerate a file's units. It is never called
 // at file granularity, where the unit is the path and no model is needed to know it.
-func BuildNamesPrompt(granularity rule.Granularity, source SourceFile) string {
+func BuildNamesPrompt(granularity rule.Granularity, includes []string, source SourceFile) string {
 	if !NeedsEnumeration(granularity) {
 		panic(fmt.Sprintf("no names prompt for granularity: %s", granularity))
 	}
-	return prompts.Enumerate(formatFileBlock(source))
+	return prompts.Enumerate(includes, formatFileBlock(source))
 }
 
 // BuildVerdictPrompt frames one rule's criterion around the files under judgement
@@ -201,7 +201,7 @@ func BuildNamesPrompt(granularity rule.Granularity, source SourceFile) string {
 // re-derived: two independent enumerations of twenty-five table rows will phrase one
 // of them differently sooner or later, and every such disagreement would surface as
 // a could-not-run.
-func BuildVerdictPrompt(rulePrompt string, files []SourceFile, units []Unit) string {
+func BuildVerdictPrompt(includes []string, rulePrompt string, files []SourceFile, units []Unit) string {
 	var listed strings.Builder
 	for _, unit := range units {
 		fmt.Fprintf(&listed, "- %s   ->   %s\n", unit.Name, unit.Key)
@@ -211,7 +211,7 @@ func BuildVerdictPrompt(rulePrompt string, files []SourceFile, units []Unit) str
 		sources.WriteString(formatFileBlock(f))
 		sources.WriteString("\n")
 	}
-	return prompts.Verdict(rulePrompt, listed.String(), sources.String())
+	return prompts.Verdict(includes, rulePrompt, listed.String(), sources.String())
 }
 
 type namesReply struct {
@@ -260,7 +260,7 @@ func readSourceFile(path string) (SourceFile, error) {
 
 func askNames(ctx context.Context, ask claudecli.Ask, opts Options, test SourceFile) ([]string, error) {
 	raw, err := ask(ctx, claudecli.Request{
-		Prompt: BuildNamesPrompt(opts.Rule.Granularity, test),
+		Prompt: BuildNamesPrompt(opts.Rule.Granularity, opts.Rule.Include, test),
 		Model:  opts.Model,
 		Effort: opts.Effort,
 		Schema: json.RawMessage(NamesSchema),
@@ -281,7 +281,7 @@ func askNames(ctx context.Context, ask claudecli.Ask, opts Options, test SourceF
 
 func askVerdicts(ctx context.Context, ask claudecli.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
 	raw, err := ask(ctx, claudecli.Request{
-		Prompt: BuildVerdictPrompt(opts.Rule.Prompt, files, units),
+		Prompt: BuildVerdictPrompt(opts.Rule.Include, opts.Rule.Prompt, files, units),
 		Model:  opts.Model,
 		Effort: opts.Effort,
 		Schema: VerdictSchemaFor(units),

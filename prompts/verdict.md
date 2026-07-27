@@ -13,7 +13,7 @@ each named thing in the file, sometimes each leaf of one, and sometimes the file
 in which case you are given one unit, its path, and you return one verdict covering
 everything in it. Judge each unit you are given on its own, exactly as identified.
 
-{{unit_model}}
+{{fragments}}
 
 ## Writing the reason
 

@@ -763,11 +763,11 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 	}{
 		{
 			name: "the verdict prompt",
-			text: func(*testing.T) string { return prompts.Verdict("", "", "") },
+			text: func(*testing.T) string { return prompts.Verdict([]string{"tests"}, "", "", "") },
 		},
 		{
 			name: "the enumeration prompt",
-			text: func(*testing.T) string { return namesPrompt(rule.GranularityTest) },
+			text: func(*testing.T) string { return namesPrompt(rule.GranularityTestCase) },
 		},
 		{
 			name: "the help a person reads",
@@ -823,7 +823,7 @@ func loadRulePrompt(t *testing.T, name string) string {
 // namesPrompt drops the file block, so the prompt is judged on the instructions
 // aritu wrote rather than on the file a caller happened to hand it.
 func namesPrompt(granularity rule.Granularity) string {
-	built := lint.BuildNamesPrompt(granularity, lint.SourceFile{Path: "subject"})
+	built := lint.BuildNamesPrompt(granularity, []string{"tests"}, lint.SourceFile{Path: "subject"})
 	instructions, _, _ := strings.Cut(built, "=== FILE:")
 	return instructions
 }

@@ -16,21 +16,22 @@ import (
 var shippedRulesDir = filepath.Join("..", "..", "..", "rules")
 
 // shippedRules is the set the feature defines, with the pairing each rule is
-// judged at. Both keys are load-bearing: two properties that disagree about
+// judged at and the fragments its prompt carries. Every key is load-bearing: two properties that disagree about
 // either cannot share a verdict call, so a flipped value silently changes what
 // the model is asked and what it can see.
 var shippedRules = []struct {
 	name          string
 	granularity   rule.Granularity
 	includeSource bool
+	include       []string
 }{
-	{name: "no-gaps", granularity: rule.GranularityFile, includeSource: true},
-	{name: "no-redundancy", granularity: rule.GranularityFile, includeSource: true},
-	{name: "proves-what-it-claims", granularity: rule.GranularityTest, includeSource: true},
-	{name: "readable", granularity: rule.GranularityFunction, includeSource: false},
-	{name: "self-contained", granularity: rule.GranularityFile, includeSource: false},
-	{name: "tests-behavior-not-implementation", granularity: rule.GranularityFunction, includeSource: true},
-	{name: "tests-one-thing", granularity: rule.GranularityFunction, includeSource: false},
+	{name: "no-gaps", granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
+	{name: "no-redundancy", granularity: rule.GranularityFile, includeSource: true, include: []string{"tests"}},
+	{name: "proves-what-it-claims", granularity: rule.GranularityTestCase, includeSource: true, include: []string{"tests"}},
+	{name: "readable", granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
+	{name: "self-contained", granularity: rule.GranularityFile, includeSource: false, include: []string{"tests"}},
+	{name: "tests-behavior-not-implementation", granularity: rule.GranularityFunction, includeSource: true, include: []string{"tests"}},
+	{name: "tests-one-thing", granularity: rule.GranularityFunction, includeSource: false, include: []string{"tests"}},
 }
 
 // requiredFixtureLanguages is the coverage floor. A prompt that passes its fixtures
@@ -72,6 +73,9 @@ func TestEveryShippedRuleDeclaresTheLevelAndEvidenceItsPropertyNeeds(t *testing.
 			}
 			if loaded.IncludeSource != shipped.includeSource {
 				t.Errorf("include_source = %v, want %v", loaded.IncludeSource, shipped.includeSource)
+			}
+			if !slices.Equal(loaded.Include, shipped.include) {
+				t.Errorf("include = %v, want %v", loaded.Include, shipped.include)
 			}
 			if strings.TrimSpace(loaded.Prompt) == "" {
 				t.Error("prompt body is empty, so the rule states no criterion")

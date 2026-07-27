@@ -431,9 +431,9 @@ func TestBuildNamesPrompt(t *testing.T) {
 		"pkg/parser_test.go", "func TestRejectsPort(t *testing.T) {}",
 	}
 
-	for _, granularity := range []rule.Granularity{rule.GranularityFunction, rule.GranularityTest} {
+	for _, granularity := range []rule.Granularity{rule.GranularityFunction, rule.GranularityTestCase} {
 		t.Run(granularity.String()+" granularity asks for each case as its own leaf", func(t *testing.T) {
-			prompt := BuildNamesPrompt(granularity, SourceFile{Path: "pkg/parser_test.go", Content: testFileSource})
+			prompt := BuildNamesPrompt(granularity, []string{"tests"}, SourceFile{Path: "pkg/parser_test.go", Content: testFileSource})
 			for _, want := range want {
 				if !strings.Contains(prompt, want) {
 					t.Errorf("names prompt does not contain %q:\n%s", want, prompt)
@@ -449,7 +449,7 @@ func TestBuildNamesPromptPanicsAtFileGranularity(t *testing.T) {
 			t.Error("BuildNamesPrompt did not panic at file granularity, where no enumeration call should ever be made")
 		}
 	}()
-	_ = BuildNamesPrompt(rule.GranularityFile, SourceFile{Path: "pkg/parser_test.go"})
+	_ = BuildNamesPrompt(rule.GranularityFile, []string{"tests"}, SourceFile{Path: "pkg/parser_test.go"})
 }
 
 func TestBuildVerdictPrompt(t *testing.T) {
@@ -458,7 +458,7 @@ func TestBuildVerdictPrompt(t *testing.T) {
 		{Path: "pkg/parser.go", Content: sourceFileSource},
 	}
 	units := UnitsFor([]string{"TestParsesHost", "TestRejectsPort (empty input)"})
-	prompt := BuildVerdictPrompt("\n\n"+rulePrompt+"\n", files, units)
+	prompt := BuildVerdictPrompt([]string{"tests"}, "\n\n"+rulePrompt+"\n", files, units)
 
 	t.Run("the rule follows the shared guidance and precedes the units", func(t *testing.T) {
 		shared := strings.Index(prompt, "Writing the reason")
