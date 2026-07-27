@@ -357,9 +357,9 @@ something other than tests runnable: aritu ships `tests`, `code` and `docs`, and
 `tests` — a test file has comments like any other source file — because kinds are
 named matchers rather than a partition of the tree.
 
-`targets`, `include_source` and `granularity` are all required, and a missing one
-is an error naming the key. Defaulting any of them silently changes which files
-reach the model, what it sees, or what it judges, and nothing would report it. A
+`targets` and `granularity` are required, and a missing one is an error naming the
+key. Defaulting either silently changes which files reach the model or what it
+judges, and nothing would report it. A
 `targets` typo is the sharpest case: `[test]` for `[tests]` would match no file, run
 nothing, and exit `0`. So an unknown kind fails when the rule is loaded, naming the
 ones there are, before a single model call — and so does an empty list, which is a
@@ -401,8 +401,10 @@ thinner guidance than a per-test rejection, and that is a known trade.
 
 ### Finding the file under test
 
-`include_source` decides what the model sees. With `false` only the test file is
-sent. With `true` the implementation goes too — four of the seven rules need it,
+`include_source` decides what the model sees. It defaults to `false`, which sends
+the file alone: finding a file under test is only meaningful for a rule about
+tests, so a rule writes the key out only when it wants the pairing. With `true` the
+implementation goes too — four of the seven test rules need it,
 because whether an identifier is a subject's surface or its internals, whether two
 inputs land in one equivalence class, and what outcomes are missing are all facts
 about the code rather than about the test.

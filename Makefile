@@ -8,9 +8,8 @@
 #   make apply FILES='internal/domain/config/*_test.go'
 #   make apply FILES='cmd/**/*_test.go internal/**/*_test.go'
 
-BINARY   ?= ./aritu
-FILES    ?=
-RULEBOOK ?= RULEBOOK.md
+BINARY ?= ./aritu
+FILES  ?=
 
 .PHONY: build apply rulebook clean
 
@@ -22,11 +21,12 @@ build:
 apply: build
 	$(BINARY) apply $(FILES)
 
-# rulebook writes the same rules as prose, for whoever is about to write a file
-# rather than for whoever already did. It calls no model.
+# rulebook prints the same rules as prose, for whoever is about to write a file
+# rather than for whoever already did. It goes to stdout and nowhere else: the
+# rules directory is the one copy, and a file written beside it would be a
+# second one to keep in step. It calls no model.
 rulebook: build
-	$(BINARY) rulebook > $(RULEBOOK)
-	@echo "wrote $(RULEBOOK)"
+	@$(BINARY) rulebook
 
 clean:
 	rm -f $(BINARY)

@@ -1040,16 +1040,15 @@ var bannedFragments = []string{
 	"assertEquals", "parametrize", "@ParameterizedTest", "self.assert",
 }
 
-// shippedRulesDir holds both rule sets: the grouped rules aritu ships, parked
-// under a leading _, and the rules this repository enforces on itself. It is read
-// from disk rather than rebuilt in a temp directory, because a prompt that quietly
-// acquires a language is invisible to a test over synthetic input.
-var shippedRulesDir = filepath.Join("..", "..", "rules")
-
 // TestNothingArituSaysNamesALanguage covers every surface where a language could
-// creep back in: the shared prompt, each rule's criterion, both enumeration calls,
+// creep back in: the shared prompt, both enumeration calls, the rulebook preamble
 // and the help a person reads. Each is checked in the same place because the list
 // of what may not appear is one list.
+//
+// The rules themselves are not among the surfaces. What sits in the rules
+// directory is whatever a repository is enforcing this week, free to name an
+// ecosystem as often as it likes; only what aritu says of its own accord owes
+// language neutrality.
 func TestNothingArituSaysNamesALanguage(t *testing.T) {
 	type surface struct {
 		name string
@@ -1074,15 +1073,6 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 			text: func(*testing.T) string { return rule.Rulebook(nil) },
 		},
 	}
-	for _, name := range shippedRuleNames(t) {
-		tests = append(tests,
-			surface{
-				name: "the rule " + name,
-				text: func(t *testing.T) string { return rule.Section(loadRule(t, name)) },
-			},
-		)
-	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			text := tc.text(t)
@@ -1099,42 +1089,6 @@ func TestNothingArituSaysNamesALanguage(t *testing.T) {
 			}
 		})
 	}
-}
-
-// shippedRuleNames is the grouped set aritu ships and not what List offers, because
-// those two have come apart. What a sweep here picks up is this repository's own
-// rule set, which is free to name an ecosystem as often as it likes; only the rules
-// aritu hands to somebody else owe language neutrality.
-//
-// The grouped rules are the ones parked under a single _. This repository parks a
-// second population under __ — its own rules, awaiting prompts — and aritu itself
-// sees no difference between the two, since a leading _ is the whole of what parking
-// means to it.
-func shippedRuleNames(t *testing.T) []string {
-	t.Helper()
-	entries, err := os.ReadDir(shippedRulesDir)
-	if err != nil {
-		t.Fatalf("reading %s: %v", shippedRulesDir, err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() && rule.IsParked(entry.Name()) && !strings.HasPrefix(entry.Name(), "__") {
-			names = append(names, entry.Name())
-		}
-	}
-	if len(names) == 0 {
-		t.Fatalf("no grouped rules in %s, so this test checked nothing", shippedRulesDir)
-	}
-	return names
-}
-
-func loadRule(t *testing.T, name string) rule.Rule {
-	t.Helper()
-	loaded, err := rule.Load(shippedRulesDir, name, []string{"code", "docs", "tests"})
-	if err != nil {
-		t.Fatalf("Load(%q) error = %v", name, err)
-	}
-	return loaded
 }
 
 // namesPrompt drops the file block, so the prompt is judged on the instructions

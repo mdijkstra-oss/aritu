@@ -100,9 +100,9 @@ func TestParsePrompt(t *testing.T) {
 			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: "body"},
 		},
 		{
-			name:    "missing include_source key",
-			raw:     "---\ntitle: one reason to fail\n---\nbody",
-			wantErr: true,
+			name: "an omitted include_source leaves the file judged on its own, without the file under test",
+			raw:  "---\ntargets: [code]\ngranularity: file\n---\nbody",
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"code"}, Body: "body"},
 		},
 		{
 			name:    "missing granularity key",
@@ -193,11 +193,6 @@ func TestParsePromptNamesTheKeyItIsMissing(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{
-			name: "include_source",
-			raw:  "---\ntargets: [tests]\ngranularity: function\n---\nbody",
-			want: "include_source",
-		},
 		{
 			name: "granularity",
 			raw:  "---\ntargets: [tests]\ninclude_source: true\n---\nbody",

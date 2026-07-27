@@ -149,10 +149,14 @@ func LoadFixtures(r Rule) ([]Fixture, error) {
 	return fixtures, nil
 }
 
-// ParsePrompt splits a prompt.md into frontmatter and body. A missing
-// include_source, granularity or targets key is an error: defaulting any of them
-// silently would change which files reach the model, or what it is asked about
-// them, without anyone noticing.
+// ParsePrompt splits a prompt.md into frontmatter and body. A missing granularity
+// or targets key is an error: defaulting either silently would change which files
+// reach the model, or what it is asked about them, without anyone noticing.
+//
+// include_source defaults to false, because false is what a rule needs unless it
+// is about tests: sending the implementation is only meaningful where there is a
+// file under test to find, and most rules judge a file on its own terms. The key
+// is written out only where a rule wants the pairing.
 func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	lines := strings.Split(raw, "\n")
 	if len(lines) == 0 || !isFrontmatterDelimiter(lines[0]) {
@@ -166,9 +170,6 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	var front frontmatter
 	if err := yaml.Unmarshal([]byte(strings.Join(lines[1:closing], "\n")), &front); err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: malformed frontmatter: %w", err)
-	}
-	if front.IncludeSource == nil {
-		return Prompt{}, errors.New("prompt.md: frontmatter must set include_source")
 	}
 	if front.Granularity == nil {
 		return Prompt{}, errors.New("prompt.md: frontmatter must set granularity")
@@ -184,7 +185,7 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
 	}
 	return Prompt{
-		IncludeSource: *front.IncludeSource,
+		IncludeSource: front.IncludeSource,
 		Granularity:   granularity,
 		Targets:       front.Targets,
 		Include:       front.Include,
@@ -342,7 +343,7 @@ func findTestFile(dir string) (string, error) {
 }
 
 type frontmatter struct {
-	IncludeSource *bool    `yaml:"include_source"`
+	IncludeSource bool     `yaml:"include_source"`
 	Granularity   *string  `yaml:"granularity"`
 	Targets       []string `yaml:"targets"`
 	Include       []string `yaml:"include"`
