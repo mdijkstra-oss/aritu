@@ -217,9 +217,9 @@ which has no default:
 service:
   endpoint: https://gateway.internal/v1
   auth_token_var: ARITU_TOKEN   # omit for an endpoint that ignores auth
+  model: sonnet
+  effort: medium                # omit to leave the endpoint's own default standing
 
-model: sonnet
-effort: medium
 votes: 2
 jobs: 5
 timeout: 10m
@@ -238,6 +238,12 @@ targets:
 proxy, a self-hosted model. There is no default: a run that silently reached a
 vendor's servers because a key was missing from the file would be a surprising
 place for a repository's source to end up.
+
+`model` and `effort` sit in the same block because which model names are valid is a
+property of the endpoint serving them: a file that moved its endpoint and left its
+model behind would be naming a model nobody serves. Both are still flags —
+`--model opus` beats the file — because which model answers is worth trying once
+from a shell in a way a gateway URL is not.
 
 `auth_token_var` is **the name of an environment variable, never a token**. Its
 value is read at startup and sent as `Authorization: Bearer <value>`. Omit it and

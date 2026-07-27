@@ -400,7 +400,7 @@ func TestExecute(t *testing.T) {
 func TestResolvedFlags(t *testing.T) {
 	neutral := t.TempDir()
 	votesRepo := writeRepo(t, "votes: 3\nrules:\n  dir: ./rules\n")
-	timeoutRepo := writeRepo(t, "timeout: 90s\nmodel: opus\neffort: high\n")
+	timeoutRepo := writeRepo(t, "timeout: 90s\nservice:\n  model: opus\n  effort: high\n")
 	typoRepo := writeRepo(t, "vote: 4\n")
 
 	defaults := settings{

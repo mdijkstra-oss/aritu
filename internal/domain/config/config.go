@@ -23,8 +23,6 @@ import (
 // same message the flag gives.
 type Config struct {
 	Dir     string    `yaml:"-"`
-	Model   *string   `yaml:"model"`
-	Effort  *string   `yaml:"effort"`
 	Output  *string   `yaml:"output"`
 	Votes   *int      `yaml:"votes"`
 	Jobs    *int      `yaml:"jobs"`
@@ -38,16 +36,23 @@ type Config struct {
 	Targets map[string][]string `yaml:"targets"`
 }
 
-// Service is where model calls go. It is a block rather than a scalar because an
-// endpoint and the credential it wants are one answer, and neither is a flag: a
-// repository points at one endpoint, and a URL typed at a shell is not how a
-// commit hook finds it.
+// Service is where model calls go and who answers them. It is a block rather than
+// four loose keys because they are one answer: an endpoint, the credential it
+// wants, and the model and effort that endpoint understands. Which model names are
+// valid is a property of the endpoint serving them, so a file that moved its
+// endpoint and left its model behind would be describing a model nobody serves.
+//
+// Only the endpoint and the credential are the block's alone. Model and effort are
+// also flags, because which model answers is a thing worth trying once from a
+// shell, in a way a gateway URL is not.
 type Service struct {
 	Endpoint *string `yaml:"endpoint"`
 	// AuthTokenVar is the NAME of an environment variable, never a token. The
 	// field is named for what it holds so that a config file read at a glance
 	// cannot be misread as a place secrets go.
 	AuthTokenVar *string `yaml:"auth_token_var"`
+	Model        *string `yaml:"model"`
+	Effort       *string `yaml:"effort"`
 }
 
 // Rules is a block because the word names two things: where rules live, and which
@@ -169,8 +174,8 @@ func allTargetsResolvedAgainst(base string, targets map[string][]string) map[str
 }
 
 var lookups = map[string]func(Config) any{
-	"model":   func(c Config) any { return valueOf(c.Model) },
-	"effort":  func(c Config) any { return valueOf(c.Effort) },
+	"model":   func(c Config) any { return valueOf(c.Service.Model) },
+	"effort":  func(c Config) any { return valueOf(c.Service.Effort) },
 	"output":  func(c Config) any { return valueOf(c.Output) },
 	"votes":   func(c Config) any { return valueOf(c.Votes) },
 	"jobs":    func(c Config) any { return valueOf(c.Jobs) },

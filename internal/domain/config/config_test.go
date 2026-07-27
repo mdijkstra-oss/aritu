@@ -18,15 +18,15 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name: "every key the file may carry survives the round trip",
-			file: `model: opus
-effort: high
-votes: 4
+			file: `votes: 4
 jobs: 3
 timeout: 1h30s
 output: json
 service:
   endpoint: https://gateway.internal/v1
   auth_token_var: ARITU_TOKEN
+  model: opus
+  effort: high
 rules:
   dir: ./rules
   enabled: [named-for-behavior, one-reason-to-fail]
@@ -40,12 +40,12 @@ targets:
 			want: func(dir string) Config {
 				return Config{
 					Dir:    dir,
-					Model:  given("opus"),
-					Effort: given("high"),
 					Output: given("json"),
 					Service: Service{
 						Endpoint:     given("https://gateway.internal/v1"),
 						AuthTokenVar: given("ARITU_TOKEN"),
+						Model:        given("opus"),
+						Effort:       given("high"),
 					},
 					Votes:   given(4),
 					Jobs:    given(3),
@@ -103,6 +103,11 @@ targets:
   folder: ./rules
 `,
 			wantErr: "folder",
+		},
+		{
+			name:    "a model written outside the service block fails the load rather than being ignored",
+			file:    "model: opus\n",
+			wantErr: "model",
 		},
 		{
 			name:    "a misspelled service block fails the load rather than leaving the endpoint unset",
@@ -298,12 +303,11 @@ func TestFind(t *testing.T) {
 
 func TestLookupOfAConfiguredValue(t *testing.T) {
 	config := Config{
-		Model:   given("opus"),
-		Effort:  given("high"),
 		Output:  given("json"),
 		Votes:   given(4),
 		Jobs:    given(3),
 		Timeout: given(Duration(90 * time.Second)),
+		Service: Service{Model: given("opus"), Effort: given("high")},
 		Rules:   Rules{Dir: given("/repo/rules")},
 	}
 	tests := []struct {
@@ -337,7 +341,7 @@ func TestLookupOfAConfiguredValue(t *testing.T) {
 // carrying zero have to keep: the omission leaves the built-in default standing,
 // while the zero has to reach the one validator and be rejected there.
 func TestLookupOfAZeroTheFileWroteDown(t *testing.T) {
-	config := Config{Votes: given(0), Jobs: given(0), Model: given(""), Timeout: given(Duration(0))}
+	config := Config{Votes: given(0), Jobs: given(0), Service: Service{Model: given("")}, Timeout: given(Duration(0))}
 	tests := []struct {
 		name string
 		flag string
