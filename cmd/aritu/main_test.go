@@ -737,7 +737,7 @@ func TestFilesFor(t *testing.T) {
 				t.Fatalf("Resolve() error = %v", err)
 			}
 
-			got, err := filesFor(tc.patterns, kinds, tc.targeted, rulesDir)
+			got, err := filesFor(tc.patterns, derivedSweep{kinds: kinds, targeted: tc.targeted, rulesDir: rulesDir})
 
 			if tc.wantErr != "" {
 				if err == nil {

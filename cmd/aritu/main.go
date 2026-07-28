@@ -25,9 +25,7 @@ import (
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
-// CLI is the whole command line. Every flag sits at the root because a repository
-// has one answer to which model and how many votes, and aritu.yml answers them
-// once for both commands rather than once per subcommand.
+// CLI is the whole command line.
 type CLI struct {
 	Config   string        `help:"Config file to use instead of searching upward for aritu.yml." placeholder:"PATH"`
 	Rule     []string      `help:"Rule to run; repeat for several. Every rule in the rules directory when omitted." placeholder:"NAME" sep:"none"`
@@ -43,14 +41,12 @@ type CLI struct {
 	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
 	Rulebook RulebookCmd   `cmd:"" help:"Write the enabled rules as a document to follow before writing."`
 
-	// Loaded is aritu.yml as read during the parse. Its target patterns and its
-	// enabled rules answer no flag, so no resolver can carry them out of the parse.
+	// A kong resolver can only supply values for flags, so aritu.yml's target
+	// patterns and enabled rules cannot leave the parse through one.
 	Loaded config.Config `kong:"-"`
 }
 
-// ApplyCmd judges files against the rules that are about them. The patterns say
-// which files to consider; each rule's targets say which of them it is handed, so
-// naming a document does not put it in front of a rule about tests.
+// ApplyCmd judges files against the rules that are about them.
 type ApplyCmd struct {
 	Patterns []string `arg:"" optional:"" name:"pattern" help:"File or glob to judge; repeat for several. Everything the enabled rules target when omitted."`
 }
@@ -58,10 +54,7 @@ type ApplyCmd struct {
 // SelftestCmd runs every named rule against its own fixtures.
 type SelftestCmd struct{}
 
-// RulebookCmd writes the enabled rules as one document, in the form they are
-// useful in before a file exists rather than after. It is the same rule set apply
-// judges against, which is the point: what a contributor is told to do and what
-// they are later measured against come from one place and cannot drift apart.
+// RulebookCmd writes the enabled rules as one document.
 type RulebookCmd struct{}
 
 const description = `An LLM linter for tests.
@@ -81,8 +74,6 @@ const exitCodes = `Exit codes:
     1  one or more did not
     2  one or more targets could not be run, which outranks 1`
 
-// defaults are the bottom layer of the precedence stack: flags override
-// aritu.yml, which overrides these.
 var defaults = kong.Vars{
 	"model":   "sonnet",
 	"effort":  "medium",
@@ -93,11 +84,9 @@ var defaults = kong.Vars{
 	"timeout": "10m",
 }
 
-// BeforeResolve layers aritu.yml under the flags. kong resolves --config during
-// the parse, so the file cannot be read before the parser exists, and a resolver
-// is the only place its values can arrive without being mistaken for flags
-// somebody typed: a flag holding its default is otherwise indistinguishable from
-// a flag nobody gave.
+// kong resolves --config during the parse, so aritu.yml cannot be read before
+// the parser exists, and a kong resolver is the only seam that distinguishes a
+// value it supplied from a flag somebody typed.
 func (c *CLI) BeforeResolve(kctx *kong.Context) error {
 	path, isFound, err := configPathFor(flagValue(kctx, "config"))
 	if err != nil || !isFound {
@@ -112,20 +101,16 @@ func (c *CLI) BeforeResolve(kctx *kong.Context) error {
 	return nil
 }
 
-// Help is the exit-code table, generated into the command's help from the same
-// place the codes are decided rather than maintained beside it.
+// Help is the long-form help kong appends to this command's usage.
 func (ApplyCmd) Help() string { return exitCodes }
 
-// Help is the exit-code table, generated into the command's help from the same
-// place the codes are decided rather than maintained beside it.
+// Help is the long-form help kong appends to this command's usage.
 func (SelftestCmd) Help() string { return exitCodes }
 
 func main() {
 	os.Exit(int(execute(os.Args[1:], os.Stdout, os.Stderr)))
 }
 
-// execute is main's body with the writers passed in, so a whole invocation can be
-// driven against buffers rather than the process's own streams.
 func execute(args []string, stdout, stderr io.Writer) lint.Exit {
 	var cli CLI
 	hasPrintedHelp := false
@@ -148,21 +133,17 @@ func execute(args []string, stdout, stderr io.Writer) lint.Exit {
 	return commandFor(kctx.Selected().Name)(ctx, &cli, stdout, stderr)
 }
 
-// newParser builds the grammar. Exit is replaced because kong's help flag ends
-// the process on its own, and this one has to report an exit code instead.
 func newParser(cli *CLI, stdout, stderr io.Writer, exit func(int)) *kong.Kong {
 	return kong.Must(cli,
 		kong.Name("aritu"),
 		kong.Description(description),
 		kong.Writers(stdout, stderr),
+		// kong's help flag ends the process on its own.
 		kong.Exit(exit),
 		defaults,
 	)
 }
 
-// reportUsage prints kong's diagnosis and the usage that goes with it. Both go to
-// stderr — the parser's help writer is redirected for exactly this — so a run
-// whose output is being parsed never finds a usage dump through the middle of it.
 func reportUsage(parser *kong.Kong, stderr io.Writer, err error) lint.Exit {
 	fmt.Fprintf(stderr, "aritu: %v\n\n", err)
 	var parseErr *kong.ParseError
@@ -173,8 +154,6 @@ func reportUsage(parser *kong.Kong, stderr io.Writer, err error) lint.Exit {
 	return lint.ExitError
 }
 
-// validate runs once, on the resolved result. Validating each source separately
-// is how a config file ends up accepting what the flag rejects.
 func validate(cli CLI) error {
 	if cli.Votes < 1 {
 		return fmt.Errorf("votes must be at least 1, got %d", cli.Votes)
@@ -188,30 +167,16 @@ func validate(cli CLI) error {
 	return nil
 }
 
-// efforts are the levels aritu offers. The Responses API also accepts none,
-// which this tool has no use for: a linter that reasons about nothing is not
-// answering the question it was asked.
 var efforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
 func isKnownEffort(effort string) bool {
 	return effort == "" || slices.Contains(efforts, effort)
 }
 
-// command is one subcommand's body. Each takes the writers rather than reaching
-// for the process streams, so a whole command can be exercised against buffers.
 type command func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit
 
-// judged is the body of a command that calls a model, which is a command needing
-// one thing more than the others: somewhere to send the call.
 type judged func(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit
 
-// judging resolves the endpoint and its credential before the body runs, so a
-// missing endpoint or a misnamed variable costs one line at startup rather than a
-// wall of 401s minutes into a sweep.
-//
-// Only the commands that call a model are wrapped. Whether an endpoint is needed
-// is a property of the command rather than a question asked at the seam, so it is
-// answered once, in the table below, where each command is named.
 func judging(body judged) command {
 	return func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
 		if cli.Debug {
@@ -226,13 +191,6 @@ func judging(body judged) command {
 	}
 }
 
-// debugging answers every call itself: the prompt body is printed and the reply
-// is fabricated, so a debug run shows exactly what would be sent without a
-// request leaving the process — no endpoint is needed and nothing is judged. The
-// splitter is answered with two placeholder units, which is what lets the linter
-// prompt render whole, units section and all. Prompts go to stderr with the
-// report untouched on stdout, and the lock keeps concurrent calls from
-// interleaving their bodies.
 func debugging(w io.Writer) service.Ask {
 	var mu sync.Mutex
 	return func(_ context.Context, req service.Request) (json.RawMessage, error) {
@@ -243,9 +201,6 @@ func debugging(w io.Writer) service.Ask {
 	}
 }
 
-// debugReply satisfies whichever schema the call carries. A verdict reply names
-// every key the schema requires, so the fabricated pass flows through the same
-// checks a real answer would.
 func debugReply(req service.Request) (json.RawMessage, error) {
 	if isSplitterCall(req) {
 		return json.Marshal(map[string][]string{"names": {"DebugUnitOne", "DebugUnitTwo"}})
@@ -268,8 +223,6 @@ type debugVerdict struct {
 	Reason    string `json:"reason"`
 }
 
-// isSplitterCall tells the two calls apart by the schema each carries, which is
-// the only thing about a request that says what it is for.
 func isSplitterCall(req service.Request) bool {
 	return string(req.Schema) == lint.NamesSchema
 }
@@ -295,9 +248,6 @@ func commandFor(name string) command {
 	return selected
 }
 
-// runApply sweeps every rule over every target. The report is written before the
-// exit code is decided, including when the sweep could not start: a caller told
-// nothing at all cannot tell an empty run from a clean one.
 func runApply(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit {
 	started := time.Now()
 	opts, setupErr := applyOptions(cli)
@@ -325,12 +275,6 @@ func runApply(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.
 	return run.ExitFor(results)
 }
 
-// applyOptions resolves everything the sweep needs before the first model call, so
-// a missing rule, a pattern matching nothing or a file no rule is about all cost
-// nothing to discover.
-//
-// The rules are loaded before the files because they are what decides which files
-// there are: with no pattern given, the sweep is whatever the enabled rules target.
 func applyOptions(cli *CLI) (run.Options, error) {
 	opts := run.Options{Votes: cli.Votes, Model: cli.Model, Effort: cli.Effort}
 
@@ -349,7 +293,11 @@ func applyOptions(cli *CLI) (run.Options, error) {
 	opts.Rules = rules
 	opts.IsTargeted = targetingBy(kinds, dir)
 
-	files, err := filesFor(cli.Apply.Patterns, kinds, targetedKindsOf(rules), glob.Rooted(dir, cli.Rules))
+	files, err := filesFor(cli.Apply.Patterns, derivedSweep{
+		kinds:    kinds,
+		targeted: targetedKindsOf(rules),
+		rulesDir: glob.Rooted(dir, cli.Rules),
+	})
 	if err != nil {
 		return opts, err
 	}
@@ -357,27 +305,28 @@ func applyOptions(cli *CLI) (run.Options, error) {
 	return opts, checkEveryFileIsTargeted(files, rules, opts.IsTargeted)
 }
 
-// filesFor expands the patterns given on the command line, falling back to every
-// file the enabled rules target. An empty sweep is an error either way: a run over
-// no files reporting green is how a hook passes because its path was wrong.
-//
-// The derived sweep never reaches inside the rules directory. What sits there is
-// rule material rather than the repository's own work — prompts, and the fixtures
-// that prove them — and a fail- fixture is a bad test written on purpose, which
-// selftest judges against the expectation its directory name carries. A pattern
-// naming one is still honoured, because that was asked for.
-func filesFor(patterns []string, kinds kind.Set, targeted []string, rulesDir string) ([]string, error) {
+func filesFor(patterns []string, derived derivedSweep) ([]string, error) {
 	if len(patterns) > 0 {
 		return glob.Expand(patterns)
 	}
-	found, err := kinds.Expand(targeted)
+	return derived.files()
+}
+
+type derivedSweep struct {
+	kinds    kind.Set
+	targeted []string
+	rulesDir string
+}
+
+func (d derivedSweep) files() ([]string, error) {
+	found, err := d.kinds.Expand(d.targeted)
 	if err != nil {
 		return nil, err
 	}
-	files := filterOutsideRules(found, rulesDir)
+	files := filterOutsideRules(found, d.rulesDir)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no targets: nothing here is %s, so name a file or glob pattern",
-			strings.Join(targeted, " or "))
+			strings.Join(d.targeted, " or "))
 	}
 	return files, nil
 }
@@ -392,15 +341,10 @@ func filterOutsideRules(files []string, rulesDir string) []string {
 	return outside
 }
 
-// isUnder compares whole segments, so a directory whose name merely begins with the
-// rules directory's is not swept away beside it.
 func isUnder(dir, path string) bool {
 	return strings.HasPrefix(path, dir+string(filepath.Separator))
 }
 
-// kindsFor resolves the vocabulary this repository judges by. Built-in patterns
-// generate against the config file's own directory, or the working directory when
-// there is no config: which files here are tests is a question about here.
 func kindsFor(loaded config.Config, dir string) (kind.Set, error) {
 	return kind.Resolve(repositoryDir(loaded, dir), loaded.Targets)
 }
@@ -412,17 +356,12 @@ func repositoryDir(loaded config.Config, dir string) string {
 	return glob.Rooted(dir, loaded.Dir)
 }
 
-// targetingBy answers whether a rule is about a file, in the one frame the kinds
-// were resolved in: a repository's own patterns are rooted at that repository, so a
-// path typed against the working directory is rooted there before it is compared.
 func targetingBy(kinds kind.Set, dir string) func(rule.Rule, string) bool {
 	return func(judged rule.Rule, file string) bool {
 		return kinds.Covers(judged.Targets, glob.Rooted(dir, file))
 	}
 }
 
-// targetedKindsOf is every kind some enabled rule is about, which is the whole of
-// what a sweep given no pattern has to cover.
 func targetedKindsOf(rules []rule.Rule) []string {
 	targeted := make([]string, 0, len(rules))
 	for _, judged := range rules {
@@ -436,9 +375,6 @@ func targetedKindsOf(rules []rule.Rule) []string {
 	return targeted
 }
 
-// checkEveryFileIsTargeted refuses a file no enabled rule is about. Nothing can
-// judge it, and a sweep that silently skipped it would report as clean as one that
-// covered everything — which is the failure exit code 2 exists for.
 func checkEveryFileIsTargeted(files []string, rules []rule.Rule, isTargeted func(rule.Rule, string) bool) error {
 	untargeted := make([]string, 0, len(files))
 	for _, file := range files {
@@ -464,7 +400,6 @@ func workingDir() (string, error) {
 	return dir, nil
 }
 
-// runSelftest runs each named rule against its own fixtures, one table per rule.
 func runSelftest(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit {
 	known, err := knownTargetsFor(cli)
 	if err != nil {
@@ -480,10 +415,6 @@ func runSelftest(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr 
 	return selftestRun{ask: ask, cli: cli, known: known, stdout: stdout, stderr: stderr}.rules(ctx, names)
 }
 
-// knownTargetsFor names the kinds a rule may target. selftest consults them only to
-// load a rule at all: which files a fixture holds is the fixture directory's answer
-// and never a kind's, or a rule's self-test would depend on the config of whichever
-// repository the rule happens to sit in.
 func knownTargetsFor(cli *CLI) ([]string, error) {
 	dir, err := workingDir()
 	if err != nil {
@@ -512,8 +443,6 @@ func (s selftestRun) rules(ctx context.Context, names []string) lint.Exit {
 	return exit
 }
 
-// A rule that could not be loaded still prints its table, because the table is
-// the diagnostic and an empty one says which rule produced nothing.
 func (s selftestRun) rule(ctx context.Context, name string) lint.Exit {
 	started := time.Now()
 	opts, results, runErr := s.results(ctx, name)
@@ -549,20 +478,10 @@ func (s selftestRun) results(ctx context.Context, name string) (selftest.Options
 	return opts, selftest.Run(ctx, s.ask, opts, fixtures), nil
 }
 
-// worse ranks could-not-run above a rule failure, so a sweep where one rule could
-// not be run is never reported as an ordinary miss.
 func worse(a, b lint.Exit) lint.Exit {
 	return max(a, b)
 }
 
-// runRulebook writes the enabled rules as one document. It calls no model: what
-// each rule asks of a writer is already written down, and having a model restate
-// it would make the same rule set produce a different document every run and cost
-// a repository an endpoint to read its own rules.
-//
-// The selection is the one apply uses, so a rule that is not enabled is not
-// preached either. There is no exit code between 0 and 2 here — a rulebook is
-// produced or it is not, and nothing in it can fall short of anything.
 func runRulebook(_ context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
 	if err := writeRulebook(cli, stdout); err != nil {
 		fmt.Fprintf(stderr, "aritu rulebook: %v\n", err)
@@ -584,9 +503,6 @@ func writeRulebook(cli *CLI, w io.Writer) error {
 	return err
 }
 
-// rulesFor loads the rules to run. Naming none runs every rule the directory
-// holds, in name order, and a name that resolves to nothing is an error naming it
-// rather than a silent skip.
 func rulesFor(cli *CLI, known []string) ([]rule.Rule, error) {
 	names, err := ruleNamesFor(cli)
 	if err != nil {
@@ -603,10 +519,6 @@ func rulesFor(cli *CLI, known []string) ([]rule.Rule, error) {
 	return rules, nil
 }
 
-// ruleNamesFor layers the rule selection the same way the flags are layered:
-// what was named on the command line, else what aritu.yml enabled, else all of
-// them. It is not a flag kong can resolve, because a list of rule names is not
-// one of the file's flag-shaped keys.
 func ruleNamesFor(cli *CLI) ([]string, error) {
 	if len(cli.Rule) > 0 {
 		return cli.Rule, nil
@@ -617,23 +529,10 @@ func ruleNamesFor(cli *CLI) ([]string, error) {
 	return rule.List(cli.Rules)
 }
 
-// attempts is how many turns one call gets before it is reported as a
-// could-not-run. A model that answers outside the schema it was handed is the one
-// failure a fresh turn usually fixes, and a sweep makes enough calls that even a
-// small per-call rate would have it report an error it did not earn.
+// A model answering outside the schema it was handed is the one failure a fresh
+// turn usually fixes.
 const attempts = 3
 
-// askFor resolves the endpoint and its credential before anything is asked, so a
-// misnamed variable costs one line at startup rather than a wall of 401s arriving
-// minutes into a sweep.
-//
-// It then bounds concurrency at the seam every model call passes through, so
-// file-level, rule-level and vote-level parallelism cannot multiply into a
-// request storm. One ask serves a whole run; a second would be a second ceiling.
-//
-// The throttle wraps the retry rather than the other way round, so a call keeps
-// its one slot across its attempts. Acquiring a slot per attempt would let a run
-// where many calls retry at once outrun the ceiling it was given.
 func askFor(cli *CLI) (service.Ask, error) {
 	endpoint := valueOr(cli.Loaded.Service.Endpoint)
 	if endpoint == "" {
@@ -653,17 +552,12 @@ func valueOr(value *string) string {
 	return *value
 }
 
-// sweep is everything a reporter needs. Both reporters take it so the choice of
-// one stays a table lookup rather than a branch.
 type sweep struct {
 	Results []run.Result
 	Options run.Options
 	Elapsed time.Duration
 }
 
-// reporter is one output format at both its moments: what it writes as targets
-// finish, and what it writes once the sweep is over. Holding both on the struct
-// keeps the choice of format a table lookup rather than a branch at each moment.
 type reporter struct {
 	observe func(run.Result)
 	finish  func(sweep) error
@@ -682,9 +576,6 @@ func reporterFor(format string, w io.Writer, colour bool) reporter {
 	return build(w, colour)
 }
 
-// prettyReporter writes each target's block as it finishes and closes with the
-// summary. The first write that failed is the one reported: a closed pipe would
-// otherwise be announced once per remaining target.
 func prettyReporter(w io.Writer, colour bool) reporter {
 	stream := run.NewReporter(w, colour)
 	var first error
@@ -703,9 +594,6 @@ func prettyReporter(w io.Writer, colour bool) reporter {
 	}
 }
 
-// silentReporter writes nothing at all: a debug run's verdicts are fabricated,
-// and reporting them would read as a judgement nobody made. The prompts on
-// stderr are the whole output.
 func silentReporter() reporter {
 	return reporter{
 		observe: func(run.Result) {},
@@ -713,8 +601,7 @@ func silentReporter() reporter {
 	}
 }
 
-// jsonReporter writes nothing until the run is over. One envelope covering every
-// report is a single document, and half a document is not parseable.
+// Half a JSON document is not parseable.
 func jsonReporter(w io.Writer, _ bool) reporter {
 	return reporter{finish: func(s sweep) error { return writeSweepJSON(w, s) }}
 }
@@ -728,25 +615,27 @@ func writeSweepJSON(w io.Writer, s sweep) error {
 	return err
 }
 
-// wantsColour keeps the decision at the boundary so the formatter stays a pure
-// function of its inputs. Escape sequences belong on a terminal and nowhere else,
-// so a pipe, a file and NO_COLOR all get plain text.
-func wantsColour(w io.Writer) bool {
+// Escape sequences belong on a terminal and nowhere else, and NO_COLOR is the
+// cross-tool convention for suppressing them (no-color.org).
+func wantsColour(stream io.Writer) bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
-	file, isFile := w.(*os.File)
+	file, isFile := stream.(*os.File)
 	if !isFile {
 		return false
 	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return isCharacterDevice(file)
 }
 
-// configPathFor honours an explicit --config over the upward search entirely, so
-// a file named on the command line is the only one consulted. Finding none is not
-// an error here: askFor is where a run without an endpoint stops, and it names the
-// key that is missing rather than the file that is.
+func isCharacterDevice(file *os.File) bool {
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
 func configPathFor(explicit string) (path string, isFound bool, err error) {
 	if explicit != "" {
 		return explicit, true, nil
@@ -768,9 +657,8 @@ func resolverFor(loaded config.Config) kong.ResolverFunc {
 	}
 }
 
-// mappable adapts a config value to what kong's mappers accept. The duration
-// mapper switches on concrete types and time.Duration is not among them, so a
-// duration crosses as the nanosecond count it already is.
+// kong's duration mapper switches on concrete types and time.Duration is not
+// among them.
 func mappable(value any) any {
 	if duration, isDuration := value.(time.Duration); isDuration {
 		return int64(duration)
@@ -778,9 +666,8 @@ func mappable(value any) any {
 	return value
 }
 
-// flagValue reads a flag straight off the parse. During BeforeResolve the values
-// have not been applied to the grammar struct yet, which is the whole point:
-// aritu.yml has to be loaded before anything resolves against it.
+// During kong's BeforeResolve the parsed values have not reached the grammar
+// struct yet.
 func flagValue(kctx *kong.Context, name string) string {
 	for _, flag := range kctx.Flags() {
 		if flag.Name == name {
