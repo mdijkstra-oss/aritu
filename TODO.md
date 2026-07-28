@@ -28,13 +28,14 @@
   sites, so `file` is the finest granularity that can hold both. Neither sees
   duplication across files, which is where most of it lives.
 
-- `no-dead-code` asks a model to decide reachability, which a parser decides
-  for free. It costs a vote per declaration per file and gets it wrong in the
-  direction that matters: judging `cmd/aritu/targets.go` it called the last
-  statement of `applyOptions` unreachable behind an "unconditional `return
-  opts, err`" that is the body of an `if err != nil` — three votes to zero,
-  twice, one of them writing "wait, `if err != nil` is conditional" before
-  failing it anyway. Every language ships a tool that settles this; here it is
-  `go vet` and `staticcheck`. Drop the rule and let the static pass own it.
-  The general form: a criterion a parser can decide belongs to the parser, and
-  aritu keeps the ones that need a reader.
+- Nothing checks reachability now. `no-dead-code` was removed for asking a
+  model to decide what a parser decides for free: it cost a vote per
+  declaration per file and got it wrong in the direction that matters — judging
+  `cmd/aritu/targets.go` it called the last statement of `applyOptions`
+  unreachable behind an "unconditional `return opts, err`" that is the body of
+  an `if err != nil`, three votes to zero, twice, one of them writing "wait,
+  `if err != nil` is conditional" before failing it anyway. What is still
+  missing is the tool that does settle it — `go vet` and `staticcheck` here —
+  wired into the same workflow that runs `apply`. The general form: a criterion
+  a parser can decide belongs to the parser, and aritu keeps the ones that need
+  a reader.
