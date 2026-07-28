@@ -27,9 +27,8 @@ type Rule struct {
 // Expectation is the pass/fail outcome a fixture directory name asserts.
 type Expectation int
 
-// Granularity is the unit a rule judges. The levels form a scale: each is a
-// refinement of the one above, so the number of verdicts a file yields never
-// decreases as the level gets finer.
+// Granularity is the unit a rule judges: the whole file, or one of the things
+// inside it.
 type Granularity int
 
 // Priority is what a violation costs. The scale has no level below med: a
@@ -67,6 +66,9 @@ const (
 	// GranularityTestCase judges each independently nameable leaf: one case of a
 	// test, or the test itself when it declares no cases.
 	GranularityTestCase
+	// GranularityComment judges each comment the file carries, keyed by the
+	// declaration it documents or sits inside.
+	GranularityComment
 )
 
 const (
@@ -214,7 +216,7 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 func ParseGranularity(name string) (Granularity, error) {
 	granularity, isKnown := granularityNames[name]
 	if !isKnown {
-		return 0, fmt.Errorf("granularity %q: must be file, function or test_case", name)
+		return 0, fmt.Errorf("granularity %q: must be file, function, test_case or comment", name)
 	}
 	return granularity, nil
 }
@@ -298,6 +300,8 @@ func (g Granularity) String() string {
 		return "function"
 	case GranularityTestCase:
 		return "test_case"
+	case GranularityComment:
+		return "comment"
 	default:
 		panic(fmt.Sprintf("unknown granularity: %d", int(g)))
 	}
@@ -342,6 +346,7 @@ var granularityNames = map[string]Granularity{
 	"file":      GranularityFile,
 	"function":  GranularityFunction,
 	"test_case": GranularityTestCase,
+	"comment":   GranularityComment,
 }
 
 var priorityNames = map[string]Priority{
