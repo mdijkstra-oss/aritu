@@ -36,13 +36,14 @@ func TestFormat(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "cases group under the function that declares them",
+			name: "only what fell short is listed, grouped under its function",
 			report: Report{
 				Rule: "named-for-behavior", File: "internal/lib/vote/vote_test.go", Votes: 2,
 				Verdicts: map[string]int{
 					"TestCollect (rejects zero rounds)":            2,
 					"TestIsUnanimous (every count at the total)":   0,
 					"TestIsUnanimous (a single vote at the total)": 1,
+					"TestIsUnanimous (an empty tally)":             2,
 					"TestSlugify": 0,
 				},
 				Reasons: map[string][]string{
@@ -53,9 +54,6 @@ func TestFormat(t *testing.T) {
 			},
 			want: "named-for-behavior  internal/lib/vote/vote_test.go\n" +
 				"\n" +
-				"  TestCollect\n" +
-				"    ✓ rejects zero rounds\n" +
-				"\n" +
 				"  TestIsUnanimous\n" +
 				"    ! a single vote at the total (1 of 2)\n" +
 				"      describes the setup alone\n" +
@@ -65,17 +63,15 @@ func TestFormat(t *testing.T) {
 				"  ✗ TestSlugify\n" +
 				"    names the unit under test with no stated outcome\n" +
 				"\n" +
-				"  1 passed  ·  3 failed  ·  1 split  ·  4 units, 2 votes\n",
+				"  2 passed  ·  3 failed  ·  1 split  ·  5 units, 2 votes\n",
 		},
 		{
-			name: "a clean file says so without listing a count",
+			name: "a clean file is its count alone, no unit listed",
 			report: Report{
 				Rule: "no-mocking-under-test", File: "parser_test.go", Votes: 4,
 				Verdicts: map[string]int{"TestParsesHost": 4},
 			},
 			want: "no-mocking-under-test  parser_test.go\n" +
-				"\n" +
-				"  ✓ TestParsesHost\n" +
 				"\n" +
 				"  1 passed  ·  1 unit, 4 votes\n",
 		},

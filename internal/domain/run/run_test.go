@@ -431,8 +431,6 @@ func TestReporterWritesEachResultAsItArrives(t *testing.T) {
 			result: passing("named-for-behavior", "alpha_test.go", 100*time.Millisecond, "TestAlpha"),
 			want: "alpha_test.go\n" +
 				"  named-for-behavior  100ms\n" +
-				"    ✓ TestAlpha\n" +
-				"\n" +
 				"    1 passed  ·  1 unit, 2 votes\n" +
 				"\n",
 		},
@@ -440,8 +438,6 @@ func TestReporterWritesEachResultAsItArrives(t *testing.T) {
 			name:   "a second rule over the same file writes no second heading",
 			result: passing("one-reason-to-fail", "alpha_test.go", 400*time.Millisecond, "TestAlpha"),
 			want: "  one-reason-to-fail  400ms\n" +
-				"    ✓ TestAlpha\n" +
-				"\n" +
 				"    1 passed  ·  1 unit, 2 votes\n" +
 				"\n",
 		},
@@ -450,8 +446,6 @@ func TestReporterWritesEachResultAsItArrives(t *testing.T) {
 			result: passing("named-for-behavior", "beta_test.go", 300*time.Millisecond, "TestBeta"),
 			want: "beta_test.go\n" +
 				"  named-for-behavior  300ms\n" +
-				"    ✓ TestBeta\n" +
-				"\n" +
 				"    1 passed  ·  1 unit, 2 votes\n" +
 				"\n",
 		},
@@ -588,15 +582,12 @@ func TestFormat(t *testing.T) {
 			want: "alpha_test.go\n" +
 				"  named-for-behavior  1.2s\n" +
 				"    TestAlpha\n" +
-				"      ✓ host\n" +
 				"      ✗ port\n" +
 				"        names the input the case supplies\n" +
 				"\n" +
 				"    1 passed  ·  1 failed  ·  2 units, 2 votes\n" +
 				"\n" +
 				"  one-reason-to-fail  400ms\n" +
-				"    ✓ TestAlpha\n" +
-				"\n" +
 				"    1 passed  ·  1 unit, 2 votes\n" +
 				"\n" +
 				"beta_test.go\n" +
@@ -606,8 +597,6 @@ func TestFormat(t *testing.T) {
 				"    0 passed  ·  1 failed  ·  1 split  ·  1 unit, 2 votes\n" +
 				"\n" +
 				"  one-reason-to-fail  200ms\n" +
-				"    ✓ TestBeta\n" +
-				"\n" +
 				"    1 passed  ·  1 unit, 2 votes\n" +
 				"\n" +
 				"  3 passed  ·  2 failed  ·  1 split  ·  2 files, 2 rules, 2 votes  ·  1.5s\n",
@@ -640,8 +629,6 @@ func TestFormat(t *testing.T) {
 			elapsed: 200 * time.Millisecond,
 			want: "alpha_test.go\n" +
 				"  named-for-behavior  100ms\n" +
-				"    ✓ TestAlpha\n" +
-				"\n" +
 				"    1 passed  ·  1 unit, 2 votes\n" +
 				"\n" +
 				"gone_test.go\n" +

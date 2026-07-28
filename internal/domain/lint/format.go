@@ -8,9 +8,11 @@ import (
 	"strings"
 )
 
-// Format renders a report for a person rather than a parser: units grouped under
-// the function that declares them, one mark each, and the model's reason under
-// anything that fell short.
+// Format renders a report for a person rather than a parser: the units that fell
+// short, grouped under the function that declares them, with the model's reason
+// under each. Units that passed appear only in the closing count — a green row
+// per unit says nothing the count does not, and on a corpus of any size those
+// rows push the failures, the reason anyone is reading, off the screen.
 //
 // A count appears only on a split vote. Unanimous agreement either way is what a
 // mark already says, whereas a split is the one outcome where the number carries
@@ -107,15 +109,32 @@ func groupsOf(verdicts map[string]int) []reportGroup {
 
 func writeGroup(b *strings.Builder, p palette, group reportGroup, r Report, standalone bool) {
 	if standalone {
+		if OutcomeFor(group.Count, r.Votes) == OutcomePass {
+			return
+		}
 		writeUnit(b, p, "  ", group.Unit, group.Function, group.Count, r)
 		b.WriteString("\n")
 		return
 	}
+	fallen := filterFallen(group.Cases, r.Votes)
+	if len(fallen) == 0 {
+		return
+	}
 	fmt.Fprintf(b, "  %s%s%s\n", p.bold, group.Function, p.reset)
-	for _, c := range group.Cases {
+	for _, c := range fallen {
 		writeUnit(b, p, "    ", c.Unit, c.Label, c.Count, r)
 	}
 	b.WriteString("\n")
+}
+
+func filterFallen(cases []reportCase, votes int) []reportCase {
+	fallen := make([]reportCase, 0, len(cases))
+	for _, c := range cases {
+		if OutcomeFor(c.Count, votes) != OutcomePass {
+			fallen = append(fallen, c)
+		}
+	}
+	return fallen
 }
 
 func writeUnit(b *strings.Builder, p palette, indent, unit, label string, count int, r Report) {

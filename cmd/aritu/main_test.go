@@ -184,7 +184,8 @@ func TestExecute(t *testing.T) {
 			name:       "every unit satisfying its rule",
 			args:       []string{"apply", "--rules", soloRules, alpha},
 			want:       lint.ExitPass,
-			wantStdout: []string{"alpha_test.go", "solo", "✓ TestDoesAThing", "1 passed"},
+			wantStdout: []string{"alpha_test.go", "solo", "1 passed"},
+			notWantOut: "✓",
 		},
 		{
 			name:       "a sweep says what it covers before its first model call",
