@@ -243,10 +243,7 @@ func askNames(ctx context.Context, ask service.Ask, opts Options, file SourceFil
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		return nil, fmt.Errorf("reading the unit names for %s: %w", file.Path, err)
 	}
-	if duplicate, hasDuplicate := findDuplicate(reply.Names); hasDuplicate {
-		return nil, fmt.Errorf("unit %q listed more than once in %s", duplicate, file.Path)
-	}
-	return reply.Names, nil
+	return uniqueNames(reply.Names), nil
 }
 
 func askVerdicts(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
@@ -313,15 +310,21 @@ func collectReasons(rounds []round, counts map[string]int, votes int) map[string
 	return reasons
 }
 
-func findDuplicate(names []string) (string, bool) {
+// uniqueNames collapses repeats while keeping first-listed order. A repeated
+// name is not necessarily the model misbehaving — a file can hold two methods
+// called Help — so the repeats fold into one judged unit rather than refusing
+// the run.
+func uniqueNames(names []string) []string {
 	seen := make(map[string]bool, len(names))
+	unique := make([]string, 0, len(names))
 	for _, name := range names {
 		if seen[name] {
-			return name, true
+			continue
 		}
 		seen[name] = true
+		unique = append(unique, name)
 	}
-	return "", false
+	return unique
 }
 
 // checkKeysMatch should never fire: the generated schema names every key and

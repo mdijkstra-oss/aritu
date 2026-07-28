@@ -48,6 +48,7 @@ var (
 	portFails   = reply(answers(true, ""), answers(false, "names the unit"))
 	noneSatisfy = reply(answers(false, "host reason"), answers(false, "port reason"))
 	droppedName = reply(answers(true, ""))
+	soloHost    = replyUnder([]string{"TestParsesHost"}, answers(true, ""))
 	extraName   = replyUnder(
 		[]string{"TestParsesHost", "TestRejectsPort", "TestGhost"},
 		answers(true, ""), answers(true, ""), answers(true, ""),
@@ -164,11 +165,13 @@ func TestApply(t *testing.T) {
 			wantErr:  "missing u02_test_rejects_port",
 		},
 		{
-			name:    "duplicate names from the name call error",
-			rule:    testOnly,
-			votes:   4,
-			names:   ok(sameName),
-			wantErr: `"TestParsesHost" listed more than once`,
+			name:         "duplicate names from the name call collapse into one unit",
+			rule:         testOnly,
+			votes:        4,
+			names:        ok(sameName),
+			verdicts:     repeat(4, ok(soloHost)),
+			wantVerdicts: map[string]int{"TestParsesHost": 4},
+			wantExit:     ExitPass,
 		},
 		{
 			name:    "votes below one errors",
