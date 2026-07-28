@@ -4,14 +4,18 @@ import (
 	"github.com/matthijn/aritu/internal/domain/rule"
 )
 
-func rulesFor(cli *CLI, known []string) ([]rule.Rule, error) {
-	names, err := ruleNamesFor(cli)
+func rulesFor(resolved settings, known []string) ([]rule.Rule, error) {
+	names, err := ruleNamesFor(resolved)
 	if err != nil {
 		return nil, err
 	}
-	return rule.LoadAll(cli.Rules, names, known)
+	return rule.LoadAll(resolved.RulesDir, names, known)
 }
 
-func ruleNamesFor(cli *CLI) ([]string, error) {
-	return rule.Names(cli.Rules, cli.Rule, cli.Loaded.Rules.Enabled)
+func ruleNamesFor(resolved settings) ([]string, error) {
+	return rule.Names(rule.Selection{
+		RulesDir: resolved.RulesDir,
+		Explicit: resolved.Rule,
+		Enabled:  resolved.Config.Rules.Enabled,
+	})
 }

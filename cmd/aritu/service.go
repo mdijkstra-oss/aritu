@@ -10,21 +10,14 @@ import (
 
 const attempts = 3
 
-func askFor(cli *CLI) (service.Ask, error) {
-	endpoint := valueOr(cli.Loaded.Service.Endpoint)
+func askFor(resolved settings) (service.Ask, error) {
+	endpoint := stringOr(resolved.Config.Service.Endpoint, "")
 	if endpoint == "" {
 		return nil, fmt.Errorf("no service.endpoint configured: set one in %s so model calls have somewhere to go", config.FileName)
 	}
-	token, err := service.Token(valueOr(cli.Loaded.Service.AuthTokenVar), os.LookupEnv)
+	token, err := service.Token(stringOr(resolved.Config.Service.AuthTokenVar, ""), os.LookupEnv)
 	if err != nil {
 		return nil, err
 	}
-	return service.Throttle(service.Retry(service.New(endpoint, token), attempts), cli.Jobs), nil
-}
-
-func valueOr(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
+	return service.Throttle(service.Retry(service.New(endpoint, token), attempts), resolved.Parallel), nil
 }

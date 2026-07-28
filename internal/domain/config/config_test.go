@@ -19,7 +19,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "every key the file may carry survives the round trip",
 			file: `votes: 4
-jobs: 3
+parallel: 3
 timeout: 1h30s
 output: json
 service:
@@ -47,9 +47,9 @@ targets:
 						Model:        given("opus"),
 						Effort:       given("high"),
 					},
-					Votes:   given(4),
-					Jobs:    given(3),
-					Timeout: given(Duration(time.Hour + 30*time.Second)),
+					Votes:    given(4),
+					Parallel: given(3),
+					Timeout:  given(Duration(time.Hour + 30*time.Second)),
 					Rules: Rules{
 						Dir:     given(filepath.Join(dir, "rules")),
 						Enabled: []string{"named-for-behavior", "one-reason-to-fail"},
@@ -303,23 +303,20 @@ func TestFind(t *testing.T) {
 
 func TestLookupOfAConfiguredValue(t *testing.T) {
 	config := Config{
-		Output:  given("json"),
-		Votes:   given(4),
-		Jobs:    given(3),
-		Timeout: given(Duration(90 * time.Second)),
-		Service: Service{Model: given("opus"), Effort: given("high")},
-		Rules:   Rules{Dir: given("/repo/rules")},
+		Output:   given("json"),
+		Votes:    given(4),
+		Parallel: given(3),
+		Timeout:  given(Duration(90 * time.Second)),
+		Rules:    Rules{Dir: given("/repo/rules")},
 	}
 	tests := []struct {
 		name string
 		flag string
 		want any
 	}{
-		{name: "the model the file names reaches the resolver", flag: "model", want: "opus"},
-		{name: "the effort the file names reaches the resolver", flag: "effort", want: "high"},
 		{name: "the output the file names reaches the resolver", flag: "output", want: "json"},
 		{name: "the vote count the file sets reaches the resolver", flag: "votes", want: 4},
-		{name: "the job limit the file sets reaches the resolver", flag: "jobs", want: 3},
+		{name: "the parallel limit the file sets reaches the resolver", flag: "parallel", want: 3},
 		{name: "the timeout arrives as a duration rather than the yaml text", flag: "timeout", want: 90 * time.Second},
 		{name: "the rules block supplies the rules directory", flag: "rules", want: "/repo/rules"},
 	}
@@ -341,15 +338,14 @@ func TestLookupOfAConfiguredValue(t *testing.T) {
 // carrying zero have to keep: the omission leaves the built-in default standing,
 // while the zero has to reach the one validator and be rejected there.
 func TestLookupOfAZeroTheFileWroteDown(t *testing.T) {
-	config := Config{Votes: given(0), Jobs: given(0), Service: Service{Model: given("")}, Timeout: given(Duration(0))}
+	config := Config{Votes: given(0), Parallel: given(0), Timeout: given(Duration(0))}
 	tests := []struct {
 		name string
 		flag string
 		want any
 	}{
 		{name: "a votes of zero resolves rather than leaving the default standing", flag: "votes", want: 0},
-		{name: "a jobs of zero resolves rather than leaving the default standing", flag: "jobs", want: 0},
-		{name: "an empty model resolves rather than leaving the default standing", flag: "model", want: ""},
+		{name: "a parallel of zero resolves rather than leaving the default standing", flag: "parallel", want: 0},
 		{name: "a zero timeout resolves rather than leaving the default standing", flag: "timeout", want: time.Duration(0)},
 	}
 
@@ -371,11 +367,9 @@ func TestLookupOfAValueTheFileNeverSet(t *testing.T) {
 		name string
 		flag string
 	}{
-		{name: "an omitted model leaves the built-in default standing", flag: "model"},
-		{name: "an omitted effort leaves the built-in default standing", flag: "effort"},
 		{name: "an omitted output leaves the built-in default standing", flag: "output"},
 		{name: "an omitted votes does not resolve to zero votes", flag: "votes"},
-		{name: "an omitted jobs does not resolve to no jobs", flag: "jobs"},
+		{name: "an omitted parallel does not resolve to no calls in flight", flag: "parallel"},
 		{name: "an omitted timeout does not resolve to an instant deadline", flag: "timeout"},
 		{name: "an omitted rules dir leaves the built-in default standing", flag: "rules"},
 		{name: "a flag the file has no key for is simply unset", flag: "config"},

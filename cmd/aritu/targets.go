@@ -4,46 +4,46 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/matthijn/aritu/internal/domain/run"
+	"github.com/matthijn/aritu/internal/domain/audit"
 	"github.com/matthijn/aritu/internal/domain/sweep"
 	"github.com/matthijn/aritu/internal/lib/glob"
 )
 
-func applyOptions(cli *CLI) (run.Options, error) {
-	opts := run.Options{Votes: cli.Votes, Model: cli.Model, Effort: cli.Effort}
+func applyOptions(resolved settings) (audit.Options, error) {
+	opts := audit.Options{Votes: resolved.Votes, Model: resolved.Model, Effort: resolved.Effort}
 
 	dir, err := workingDir()
 	if err != nil {
 		return opts, err
 	}
-	kinds, err := sweep.Kinds(cli.Loaded, dir)
+	kinds, err := sweep.Kinds(resolved.Config, dir)
 	if err != nil {
 		return opts, err
 	}
-	rules, err := rulesFor(cli, kinds.Names())
+	rules, err := rulesFor(resolved, kinds.Names())
 	if err != nil {
 		return opts, err
 	}
 	opts.Rules = rules
 
-	resolved, err := sweep.Resolve(sweep.Request{
-		Patterns: cli.Apply.Patterns,
+	swept, err := sweep.Resolve(sweep.Request{
+		Patterns: resolved.Patterns,
 		Rules:    rules,
 		Kinds:    kinds,
 		Dir:      dir,
-		RulesDir: glob.Rooted(dir, cli.Rules),
+		RulesDir: glob.Rooted(dir, resolved.RulesDir),
 	})
-	opts.Files = resolved.Files
-	opts.IsTargeted = resolved.IsTargeted
+	opts.Files = swept.Files
+	opts.IsTargeted = swept.IsTargeted
 	return opts, err
 }
 
-func knownTargetsFor(cli *CLI) ([]string, error) {
+func knownTargetsFor(resolved settings) ([]string, error) {
 	dir, err := workingDir()
 	if err != nil {
 		return nil, err
 	}
-	kinds, err := sweep.Kinds(cli.Loaded, dir)
+	kinds, err := sweep.Kinds(resolved.Config, dir)
 	if err != nil {
 		return nil, err
 	}

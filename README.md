@@ -242,7 +242,7 @@ service:
   effort: medium                # omit to leave the endpoint's own default standing
 
 votes: 2
-jobs: 5
+parallel: 5
 timeout: 10m
 output: pretty
 
@@ -262,9 +262,9 @@ place for a repository's source to end up.
 
 `model` and `effort` sit in the same block because which model names are valid is a
 property of the endpoint serving them: a file that moved its endpoint and left its
-model behind would be naming a model nobody serves. Both are still flags —
-`--model opus` beats the file — because which model answers is worth trying once
-from a shell in a way a gateway URL is not.
+model behind would be naming a model nobody serves. Neither has a flag, for the
+same reason — they answer to the endpoint above them, and a shell that overrode one
+without the other would be describing a pairing the file never sanctioned.
 
 `auth_token_var` is **the name of an environment variable, never a token**. Its
 value is read at startup and sent as `Authorization: Bearer <value>`. Omit it and
@@ -600,16 +600,17 @@ which costs nothing to know and cannot be disagreed with.
 |---|---|---|
 | `--rule` | all | rule to run; repeat for several |
 | `--config` | search upward | config file to use instead of `aritu.yml` discovery |
-| `--model` | `sonnet` | model name sent to the endpoint |
 | `--output` | `pretty` | `pretty` for reading, `json` for parsing |
 | `--votes` | `1` | rounds run per unit; a strict majority must agree it passes |
-| `--jobs` | `5` | model calls allowed in flight at once |
-| `--effort` | — | reasoning effort; empty leaves the endpoint default |
+| `--parallel` | `5` | model calls allowed in flight at once |
 | `--rules` | `./rules` | directory holding one subdirectory per rule |
 | `--timeout` | `10m` | deadline for the whole run, so a hung endpoint cannot hang a commit hook |
 | `--debug` | off | print each prompt on stderr instead of calling the model — placeholder units stand in for the splitter's answer, no report is written, no endpoint is needed |
 
-`--jobs` bounds concurrency at the one seam every model call passes through, so
+Which model answers, and at what effort, is `service` in the config file and
+nowhere else. See [Configuration](#configuration).
+
+`--parallel` bounds concurrency at the one seam every model call passes through, so
 fixture-level and vote-level parallelism cannot multiply into a process storm.
 
 `--timeout` covers the entire run rather than a single call, so it scales with how

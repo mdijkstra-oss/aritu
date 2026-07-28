@@ -22,13 +22,13 @@ import (
 // somebody wrote down has to reach validation and be rejected there, with the
 // same message the flag gives.
 type Config struct {
-	Dir     string    `yaml:"-"`
-	Output  *string   `yaml:"output"`
-	Votes   *int      `yaml:"votes"`
-	Jobs    *int      `yaml:"jobs"`
-	Timeout *Duration `yaml:"timeout"`
-	Service Service   `yaml:"service"`
-	Rules   Rules     `yaml:"rules"`
+	Dir      string    `yaml:"-"`
+	Output   *string   `yaml:"output"`
+	Votes    *int      `yaml:"votes"`
+	Parallel *int      `yaml:"parallel"`
+	Timeout  *Duration `yaml:"timeout"`
+	Service  Service   `yaml:"service"`
+	Rules    Rules     `yaml:"rules"`
 
 	// Targets is the repository's own vocabulary of file kinds: each key names a
 	// kind a rule may be about, and carries the patterns that are of it. A key
@@ -41,10 +41,6 @@ type Config struct {
 // wants, and the model and effort that endpoint understands. Which model names are
 // valid is a property of the endpoint serving them, so a file that moved its
 // endpoint and left its model behind would be describing a model nobody serves.
-//
-// Only the endpoint and the credential are the block's alone. Model and effort are
-// also flags, because which model answers is a thing worth trying once from a
-// shell, in a way a gateway URL is not.
 type Service struct {
 	Endpoint *string `yaml:"endpoint"`
 	// AuthTokenVar is the NAME of an environment variable, never a token. The
@@ -174,13 +170,11 @@ func allTargetsResolvedAgainst(base string, targets map[string][]string) map[str
 }
 
 var lookups = map[string]func(Config) any{
-	"model":   func(c Config) any { return valueOf(c.Service.Model) },
-	"effort":  func(c Config) any { return valueOf(c.Service.Effort) },
-	"output":  func(c Config) any { return valueOf(c.Output) },
-	"votes":   func(c Config) any { return valueOf(c.Votes) },
-	"jobs":    func(c Config) any { return valueOf(c.Jobs) },
-	"timeout": func(c Config) any { return valueOf(nanosecondsOf(c.Timeout)) },
-	"rules":   func(c Config) any { return valueOf(c.Rules.Dir) },
+	"output":   func(c Config) any { return valueOf(c.Output) },
+	"votes":    func(c Config) any { return valueOf(c.Votes) },
+	"parallel": func(c Config) any { return valueOf(c.Parallel) },
+	"timeout":  func(c Config) any { return valueOf(nanosecondsOf(c.Timeout)) },
+	"rules":    func(c Config) any { return valueOf(c.Rules.Dir) },
 }
 
 func valueOf[T any](value *T) any {

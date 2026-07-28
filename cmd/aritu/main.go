@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -19,21 +17,19 @@ import (
 )
 
 type CLI struct {
-	Config   string        `help:"Config file to use instead of searching upward for aritu.yml." placeholder:"PATH"`
-	Rule     []string      `help:"Rule to run; repeat for several. Every rule in the rules directory when omitted." placeholder:"NAME" sep:"none"`
-	Model    string        `help:"Model name sent to the service endpoint." default:"${model}"`
-	Effort   string        `help:"Reasoning effort: low, medium, high, xhigh or max. Empty leaves the endpoint default." default:"${effort}"`
-	Votes    int           `help:"Rounds run per unit; a strict majority must agree it passes." default:"${votes}"`
-	Jobs     int           `help:"Model calls allowed in flight at once." default:"${jobs}"`
-	Output   string        `help:"How to render the report: pretty or json." default:"${output}"`
-	Rules    string        `help:"Directory holding one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
-	Timeout  time.Duration `help:"Deadline for the whole run, so a hung endpoint cannot hang a commit hook." default:"${timeout}"`
-	Debug    bool          `help:"Print each prompt on stderr instead of calling the model. Nothing is judged and no endpoint is needed."`
-	Apply    ApplyCmd      `cmd:"" help:"Judge files against rules."`
-	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
-	Rulebook RulebookCmd   `cmd:"" help:"Write the enabled rules as a document to follow before writing."`
+	ConfigPath string        `name:"config" help:"Config file to use instead of searching upward for aritu.yml." placeholder:"PATH"`
+	Rule       []string      `help:"Rule to run; repeat for several. Every rule in the rules directory when omitted." placeholder:"NAME" sep:"none"`
+	Votes      int           `help:"Rounds run per unit; a strict majority must agree it passes." default:"${votes}"`
+	Parallel   int           `help:"Model calls allowed in flight at once." default:"${parallel}"`
+	Format     string        `name:"output" help:"How to render the report: pretty or json." default:"${output}"`
+	RulesDir   string        `name:"rules" help:"Directory holding one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
+	Timeout    time.Duration `help:"Deadline for the whole run, so a hung endpoint cannot hang a commit hook." default:"${timeout}"`
+	Debug      bool          `help:"Print each prompt on stderr instead of calling the model. Nothing is judged and no endpoint is needed."`
+	Apply      ApplyCmd      `cmd:"" help:"Judge files against rules."`
+	Selftest   SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
+	Rulebook   RulebookCmd   `cmd:"" help:"Write the enabled rules as a document to follow before writing."`
 
-	Loaded config.Config `kong:"-"`
+	Config config.Config `kong:"-"`
 }
 
 type ApplyCmd struct {
@@ -62,13 +58,11 @@ const exitCodes = `Exit codes:
     2  one or more targets could not be run, which outranks 1`
 
 var defaults = kong.Vars{
-	"model":   "sonnet",
-	"effort":  "medium",
-	"votes":   "1",
-	"jobs":    "5",
-	"output":  "pretty",
-	"rules":   "./rules",
-	"timeout": "10m",
+	"votes":    "1",
+	"parallel": "5",
+	"output":   "pretty",
+	"rules":    "./rules",
+	"timeout":  "10m",
 }
 
 func (c *CLI) BeforeResolve(kctx *kong.Context) error {
@@ -80,7 +74,7 @@ func (c *CLI) BeforeResolve(kctx *kong.Context) error {
 	if err != nil {
 		return err
 	}
-	c.Loaded = loaded
+	c.Config = loaded
 	kctx.AddResolver(resolverFor(loaded))
 	return nil
 }
@@ -107,14 +101,15 @@ func execute(args []string, stdout, stderr io.Writer) lint.Exit {
 	if err != nil {
 		return reportUsage(parser, out.stderr, err)
 	}
-	if err := validate(cli); err != nil {
+	resolved := settingsFrom(cli)
+	if err := validate(resolved); err != nil {
 		fmt.Fprintf(out.stderr, "aritu: %v\n", err)
 		return lint.ExitError
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), cli.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), resolved.Timeout)
 	defer cancel()
-	return commandFor(kctx.Selected().Name)(ctx, &cli, out)
+	return commandFor(kctx.Selected().Name)(ctx, resolved, out)
 }
 
 func newParser(cli *CLI, out streams, interceptExit func(int)) *kong.Kong {
@@ -137,40 +132,21 @@ func reportUsage(parser *kong.Kong, stderr io.Writer, err error) lint.Exit {
 	return lint.ExitError
 }
 
-func validate(cli CLI) error {
-	if cli.Votes < 1 {
-		return fmt.Errorf("votes must be at least 1, got %d", cli.Votes)
-	}
-	if _, isKnown := reporters[cli.Output]; !isKnown {
-		return fmt.Errorf("unknown output %q, want pretty or json", cli.Output)
-	}
-	if !isKnownEffort(cli.Effort) {
-		return fmt.Errorf("unknown effort %q, want one of %s, or empty for the endpoint default", cli.Effort, strings.Join(efforts, ", "))
-	}
-	return nil
-}
+type command func(ctx context.Context, resolved settings, out streams) lint.Exit
 
-var efforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
-
-func isKnownEffort(effort string) bool {
-	return effort == "" || slices.Contains(efforts, effort)
-}
-
-type command func(ctx context.Context, cli *CLI, out streams) lint.Exit
-
-type judged func(ctx context.Context, cli *CLI, ask service.Ask, out streams) lint.Exit
+type judged func(ctx context.Context, resolved settings, ask service.Ask, out streams) lint.Exit
 
 func judging(body judged) command {
-	return func(ctx context.Context, cli *CLI, out streams) lint.Exit {
-		if cli.Debug {
-			return body(ctx, cli, debug.New(out.stderr), out)
+	return func(ctx context.Context, resolved settings, out streams) lint.Exit {
+		if resolved.Debug {
+			return body(ctx, resolved, debug.New(out.stderr), out)
 		}
-		ask, err := askFor(cli)
+		ask, err := askFor(resolved)
 		if err != nil {
 			fmt.Fprintf(out.stderr, "aritu: %v\n", err)
 			return lint.ExitError
 		}
-		return body(ctx, cli, ask, out)
+		return body(ctx, resolved, ask, out)
 	}
 }
 

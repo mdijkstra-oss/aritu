@@ -9,20 +9,20 @@ import (
 	"github.com/matthijn/aritu/internal/domain/rule"
 )
 
-func runRulebook(_ context.Context, cli *CLI, out streams) lint.Exit {
-	if err := writeRulebook(cli, out.stdout); err != nil {
+func runRulebook(_ context.Context, resolved settings, out streams) lint.Exit {
+	if err := writeRulebook(resolved, out.stdout); err != nil {
 		fmt.Fprintf(out.stderr, "aritu rulebook: %v\n", err)
 		return lint.ExitError
 	}
 	return lint.ExitPass
 }
 
-func writeRulebook(cli *CLI, w io.Writer) error {
-	known, err := knownTargetsFor(cli)
+func writeRulebook(resolved settings, w io.Writer) error {
+	known, err := knownTargetsFor(resolved)
 	if err != nil {
 		return err
 	}
-	rules, err := rulesFor(cli, known)
+	rules, err := rulesFor(resolved, known)
 	if err != nil {
 		return err
 	}

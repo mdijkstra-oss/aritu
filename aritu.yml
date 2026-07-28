@@ -5,4 +5,4 @@ service:
   # auth_token_var: ARITU_TOKEN   # omit for an endpoint that ignores auth
 
 votes: 3
-jobs: 10
+parallel: 10

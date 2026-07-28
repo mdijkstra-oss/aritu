@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matthijn/aritu/internal/domain/audit"
 	"github.com/matthijn/aritu/internal/domain/config"
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/rule"
-	"github.com/matthijn/aritu/internal/domain/run"
 	"github.com/matthijn/aritu/prompts"
 )
 
@@ -51,6 +51,7 @@ func TestExecute(t *testing.T) {
 
 	noServiceRepo := writeRepo(t, "rules:\n  dir: ./rules\n")
 	unsetTokenRepo := writeRepo(t, serviceBlock(satisfied)+"  auth_token_var: "+unsetVariable+"\n")
+	badEffortRepo := writeRepo(t, serviceBlock(satisfied)+"  effort: extreme\n")
 
 	votesRepo := writeRepo(t, "votes: 3\nrules:\n  dir: ./rules\n"+serviceBlock(satisfied))
 	typoRepo := writeRepo(t, "vote: 4\n")
@@ -92,7 +93,7 @@ func TestExecute(t *testing.T) {
 			name:       "the root help carries every command and every flag",
 			args:       []string{"--help"},
 			want:       lint.ExitPass,
-			wantStdout: []string{"apply", "selftest", "rulebook", "--model", "--effort", "--jobs", "--timeout", "--config"},
+			wantStdout: []string{"apply", "selftest", "rulebook", "--parallel", "--timeout", "--config", "--output"},
 		},
 		{
 			name:       "apply with a vote count that is not a number",
@@ -131,8 +132,9 @@ func TestExecute(t *testing.T) {
 			wantStderr: []string{`unknown output "yaml"`, "pretty or json"},
 		},
 		{
-			name:       "an unknown effort is refused before any model is called",
-			args:       []string{"apply", "--effort", "extreme", "parser_test.go"},
+			name:       "an effort the config names but the CLI does not accept is refused before any model is called",
+			dir:        badEffortRepo,
+			args:       []string{"apply", "--rules", soloRules, alpha},
 			want:       lint.ExitError,
 			wantStderr: []string{`unknown effort "extreme"`, "xhigh"},
 		},
@@ -405,23 +407,21 @@ func TestExecute(t *testing.T) {
 	}
 }
 
-// TestResolvedFlags pins the three-layer precedence directly, because a flag
-// holding its default is indistinguishable from a flag nobody typed and only the
-// resolved struct shows which layer actually won.
 func TestResolvedFlags(t *testing.T) {
 	neutral := t.TempDir()
 	votesRepo := writeRepo(t, "votes: 3\nrules:\n  dir: ./rules\n")
 	timeoutRepo := writeRepo(t, "timeout: 90s\nservice:\n  model: opus\n  effort: high\n")
+	emptyEffortRepo := writeRepo(t, "service:\n  effort: ''\n")
 	typoRepo := writeRepo(t, "vote: 4\n")
 
 	defaults := settings{
-		Model:   "sonnet",
-		Effort:  "medium",
-		Output:  "pretty",
-		Rules:   "./rules",
-		Votes:   1,
-		Jobs:    5,
-		Timeout: 10 * time.Minute,
+		Model:    "sonnet",
+		Effort:   "medium",
+		Format:   "pretty",
+		RulesDir: "./rules",
+		Votes:    1,
+		Parallel: 5,
+		Timeout:  10 * time.Minute,
 	}
 	withTargets := func(s settings, patterns ...string) settings {
 		s.Patterns = patterns
@@ -447,26 +447,26 @@ func TestResolvedFlags(t *testing.T) {
 		},
 		{
 			name: "flags after the patterns still apply",
-			args: []string{"apply", "parser_test.go", "--model", "opus", "--votes", "2"},
+			args: []string{"apply", "parser_test.go", "--votes", "2"},
 			want: withTargets(settings{
-				Model: "opus", Effort: "medium", Output: "pretty", Rules: "./rules",
-				Votes: 2, Jobs: 5, Timeout: 10 * time.Minute,
+				Model: "sonnet", Effort: "medium", Format: "pretty", RulesDir: "./rules",
+				Votes: 2, Parallel: 5, Timeout: 10 * time.Minute,
 			}, "parser_test.go"),
 		},
 		{
 			name: "every flag overridden",
-			args: []string{"selftest", "--model", "haiku", "--votes", "7", "--effort", "low", "--output", "json", "--rules", "/etc/aritu/rules", "--timeout", "90s", "--jobs", "3"},
+			args: []string{"selftest", "--votes", "7", "--output", "json", "--rules", "/etc/aritu/rules", "--timeout", "90s", "--parallel", "3"},
 			want: settings{
-				Model: "haiku", Effort: "low", Output: "json", Rules: "/etc/aritu/rules",
-				Votes: 7, Jobs: 3, Timeout: 90 * time.Second,
+				Model: "sonnet", Effort: "medium", Format: "json", RulesDir: "/etc/aritu/rules",
+				Votes: 7, Parallel: 3, Timeout: 90 * time.Second,
 			},
 		},
 		{
 			name: "a repeated rule flag collects each name in the order it was given",
 			args: []string{"apply", "--rule", "one-reason-to-fail", "--rule", "named-for-behavior", "parser_test.go"},
 			want: withTargets(settings{
-				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: "./rules",
-				Votes: 1, Jobs: 5, Timeout: 10 * time.Minute,
+				Model: "sonnet", Effort: "medium", Format: "pretty", RulesDir: "./rules",
+				Votes: 1, Parallel: 5, Timeout: 10 * time.Minute,
 				Rule: []string{"one-reason-to-fail", "named-for-behavior"},
 			}, "parser_test.go"),
 		},
@@ -474,24 +474,32 @@ func TestResolvedFlags(t *testing.T) {
 			name: "the config file overrides the built-in defaults",
 			args: []string{"apply", "--config", filepath.Join(votesRepo, "aritu.yml"), "parser_test.go"},
 			want: withTargets(settings{
-				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: filepath.Join(votesRepo, "rules"),
-				Votes: 3, Jobs: 5, Timeout: 10 * time.Minute,
+				Model: "sonnet", Effort: "medium", Format: "pretty", RulesDir: filepath.Join(votesRepo, "rules"),
+				Votes: 3, Parallel: 5, Timeout: 10 * time.Minute,
 			}, "parser_test.go"),
 		},
 		{
 			name: "a flag overrides the config file",
 			args: []string{"apply", "--config", filepath.Join(votesRepo, "aritu.yml"), "--votes", "2", "parser_test.go"},
 			want: withTargets(settings{
-				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: filepath.Join(votesRepo, "rules"),
-				Votes: 2, Jobs: 5, Timeout: 10 * time.Minute,
+				Model: "sonnet", Effort: "medium", Format: "pretty", RulesDir: filepath.Join(votesRepo, "rules"),
+				Votes: 2, Parallel: 5, Timeout: 10 * time.Minute,
 			}, "parser_test.go"),
 		},
 		{
-			name: "a duration in the config arrives as a duration rather than the yaml text",
+			name: "the model and effort the config names reach the run, having no flag to come from",
 			args: []string{"apply", "--config", filepath.Join(timeoutRepo, "aritu.yml"), "parser_test.go"},
 			want: withTargets(settings{
-				Model: "opus", Effort: "high", Output: "pretty", Rules: "./rules",
-				Votes: 1, Jobs: 5, Timeout: 90 * time.Second,
+				Model: "opus", Effort: "high", Format: "pretty", RulesDir: "./rules",
+				Votes: 1, Parallel: 5, Timeout: 90 * time.Second,
+			}, "parser_test.go"),
+		},
+		{
+			name: "an effort the config writes down as empty stays empty rather than taking the built-in default",
+			args: []string{"apply", "--config", filepath.Join(emptyEffortRepo, "aritu.yml"), "parser_test.go"},
+			want: withTargets(settings{
+				Model: "sonnet", Effort: "", Format: "pretty", RulesDir: "./rules",
+				Votes: 1, Parallel: 5, Timeout: 10 * time.Minute,
 			}, "parser_test.go"),
 		},
 		{
@@ -499,8 +507,8 @@ func TestResolvedFlags(t *testing.T) {
 			dir:  filepath.Join(votesRepo, "internal", "pkg"),
 			args: []string{"apply", "alpha_test.go"},
 			want: withTargets(settings{
-				Model: "sonnet", Effort: "medium", Output: "pretty", Rules: filepath.Join(votesRepo, "rules"),
-				Votes: 3, Jobs: 5, Timeout: 10 * time.Minute,
+				Model: "sonnet", Effort: "medium", Format: "pretty", RulesDir: filepath.Join(votesRepo, "rules"),
+				Votes: 3, Parallel: 5, Timeout: 10 * time.Minute,
 			}, "alpha_test.go"),
 		},
 		{
@@ -526,7 +534,7 @@ func TestResolvedFlags(t *testing.T) {
 
 			if tc.wantErr != "" {
 				if err == nil {
-					t.Fatalf("Parse(%q) = %+v, want an error mentioning %q", tc.args, settingsOf(cli), tc.wantErr)
+					t.Fatalf("Parse(%q) = %+v, want an error mentioning %q", tc.args, resolvedScalars(cli), tc.wantErr)
 				}
 				if !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("Parse(%q) error = %v, want it to mention %q", tc.args, err, tc.wantErr)
@@ -536,107 +544,85 @@ func TestResolvedFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse(%q) error = %v, want none", tc.args, err)
 			}
-			if got := settingsOf(cli); !reflect.DeepEqual(got, tc.want) {
+			if got := resolvedScalars(cli); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("Parse(%q) resolved to %+v, want %+v", tc.args, got, tc.want)
 			}
 		})
 	}
 }
 
-// settings is the resolved command line without the parser's own bookkeeping, so
-// a precedence table can compare whole results rather than field by field.
-type settings struct {
-	Model    string
-	Effort   string
-	Output   string
-	Rules    string
-	Votes    int
-	Jobs     int
-	Timeout  time.Duration
-	Rule     []string
-	Patterns []string
-}
-
-func settingsOf(cli CLI) settings {
-	return settings{
-		Model:    cli.Model,
-		Effort:   cli.Effort,
-		Output:   cli.Output,
-		Rules:    cli.Rules,
-		Votes:    cli.Votes,
-		Jobs:     cli.Jobs,
-		Timeout:  cli.Timeout,
-		Rule:     cli.Rule,
-		Patterns: cli.Apply.Patterns,
-	}
+func resolvedScalars(cli CLI) settings {
+	scalars := settingsFrom(cli)
+	scalars.Config = config.Config{}
+	return scalars
 }
 
 func TestValidate(t *testing.T) {
-	valid := CLI{Votes: 1, Output: "pretty", Effort: "medium"}
-	with := func(change func(*CLI)) CLI {
+	valid := settings{Votes: 1, Format: "pretty", Effort: "medium"}
+	with := func(change func(*settings)) settings {
 		changed := valid
 		change(&changed)
 		return changed
 	}
 
 	tests := []struct {
-		name    string
-		cli     CLI
-		wantErr string
+		name     string
+		resolved settings
+		wantErr  string
 	}{
 		{
-			name: "a single vote, pretty output and a known effort pass",
-			cli:  valid,
+			name:     "a single vote, pretty output and a known effort pass",
+			resolved: valid,
 		},
 		{
-			name: "json is a known output",
-			cli:  with(func(c *CLI) { c.Output = "json" }),
+			name:     "json is a known output",
+			resolved: with(func(s *settings) { s.Format = "json" }),
 		},
 		{
-			name: "an empty effort leaves the CLI default standing",
-			cli:  with(func(c *CLI) { c.Effort = "" }),
+			name:     "an empty effort leaves the endpoint default standing",
+			resolved: with(func(s *settings) { s.Effort = "" }),
 		},
 		{
-			name: "every level the CLI accepts is a known effort",
-			cli:  with(func(c *CLI) { c.Effort = "xhigh" }),
+			name:     "every level the CLI accepts is a known effort",
+			resolved: with(func(s *settings) { s.Effort = "xhigh" }),
 		},
 		{
-			name:    "zero votes",
-			cli:     with(func(c *CLI) { c.Votes = 0 }),
-			wantErr: "votes must be at least 1, got 0",
+			name:     "zero votes",
+			resolved: with(func(s *settings) { s.Votes = 0 }),
+			wantErr:  "votes must be at least 1, got 0",
 		},
 		{
-			name:    "negative votes",
-			cli:     with(func(c *CLI) { c.Votes = -3 }),
-			wantErr: "votes must be at least 1, got -3",
+			name:     "negative votes",
+			resolved: with(func(s *settings) { s.Votes = -3 }),
+			wantErr:  "votes must be at least 1, got -3",
 		},
 		{
-			name:    "an output with no reporter behind it",
-			cli:     with(func(c *CLI) { c.Output = "yaml" }),
-			wantErr: `unknown output "yaml", want pretty or json`,
+			name:     "an output with no reporter behind it",
+			resolved: with(func(s *settings) { s.Format = "yaml" }),
+			wantErr:  `unknown output "yaml", want pretty or json`,
 		},
 		{
-			name:    "an effort the CLI does not accept",
-			cli:     with(func(c *CLI) { c.Effort = "extreme" }),
-			wantErr: `unknown effort "extreme"`,
+			name:     "an effort the CLI does not accept",
+			resolved: with(func(s *settings) { s.Effort = "extreme" }),
+			wantErr:  `unknown effort "extreme"`,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validate(tc.cli)
+			err := validate(tc.resolved)
 
 			if tc.wantErr == "" {
 				if err != nil {
-					t.Fatalf("validate(%+v) = %v, want no error", tc.cli, err)
+					t.Fatalf("validate(%+v) = %v, want no error", tc.resolved, err)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("validate(%+v) = nil, want an error mentioning %q", tc.cli, tc.wantErr)
+				t.Fatalf("validate(%+v) = nil, want an error mentioning %q", tc.resolved, tc.wantErr)
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Errorf("validate(%+v) error = %q, want it to contain %q", tc.cli, err, tc.wantErr)
+				t.Errorf("validate(%+v) error = %q, want it to contain %q", tc.resolved, err, tc.wantErr)
 			}
 		})
 	}
@@ -804,7 +790,7 @@ func writeFile(t *testing.T, path, content string) {
 
 func reportsIn(t *testing.T, stdout []byte) int {
 	t.Helper()
-	var envelope run.Envelope
+	var envelope audit.Envelope
 	if err := json.Unmarshal(stdout, &envelope); err != nil {
 		t.Fatalf("decoding %q as a report envelope: %v", stdout, err)
 	}

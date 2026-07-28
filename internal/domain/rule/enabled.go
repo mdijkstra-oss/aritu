@@ -1,15 +1,21 @@
 package rule
 
+type Selection struct {
+	RulesDir string
+	Explicit []string
+	Enabled  []string
+}
+
 // Names picks the rules to run: those asked for by name, else those the config
 // enables, else every rule in the directory.
-func Names(rulesDir string, explicit, enabled []string) ([]string, error) {
-	if len(explicit) > 0 {
-		return explicit, nil
+func Names(selection Selection) ([]string, error) {
+	if len(selection.Explicit) > 0 {
+		return selection.Explicit, nil
 	}
-	if len(enabled) > 0 {
-		return enabled, nil
+	if len(selection.Enabled) > 0 {
+		return selection.Enabled, nil
 	}
-	return List(rulesDir)
+	return List(selection.RulesDir)
 }
 
 // LoadAll loads each named rule, failing on the first that cannot be read.
