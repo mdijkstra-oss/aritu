@@ -4,6 +4,12 @@ Only the rule in <rule> applies. A unit may be badly named, may do two things at
 
 The files below are the whole of your evidence, not the whole of the codebase. A claim that needs code you cannot see — whether a declaration is called from another file, whether anything else uses a type — cannot be checked from here, and a unit is never failed on one. Judge only what these files themselves prove.
 
+Write the reason first, then set satisfies to what the reason concludes. A reason that says the unit is fine goes with satisfies true; a reason that names a violation goes with satisfies false — never the other way around.
+
+Use the rule's own numbers and words. If the rule says five arguments, the limit is five, not a number remembered from somewhere else.
+
+When you cannot decide, pass. A unit fails only on evidence in the files; doubt is not evidence.
+
 Every verdict carries a one-sentence reason:
 
 - For a unit that satisfies the rule, one short clause naming what carries it is enough.
