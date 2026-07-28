@@ -1,6 +1,6 @@
 ---
 targets: [code]
-granularity: file
+granularity: function
 priority: high
 ---
 

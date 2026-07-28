@@ -69,6 +69,10 @@ const (
 	// GranularityComment judges each comment the file carries, keyed by the
 	// declaration it documents or sits inside.
 	GranularityComment
+	// GranularityDeclaration judges each named declaration at any level — a
+	// function, method, type, constant, variable or field. It is what function
+	// granularity is, widened to the names no function encloses.
+	GranularityDeclaration
 )
 
 const (
@@ -216,7 +220,7 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 func ParseGranularity(name string) (Granularity, error) {
 	granularity, isKnown := granularityNames[name]
 	if !isKnown {
-		return 0, fmt.Errorf("granularity %q: must be file, function, test_case or comment", name)
+		return 0, fmt.Errorf("granularity %q: must be file, function, test_case, comment or declaration", name)
 	}
 	return granularity, nil
 }
@@ -302,6 +306,8 @@ func (g Granularity) String() string {
 		return "test_case"
 	case GranularityComment:
 		return "comment"
+	case GranularityDeclaration:
+		return "declaration"
 	default:
 		panic(fmt.Sprintf("unknown granularity: %d", int(g)))
 	}
@@ -345,8 +351,9 @@ var expectationPrefixes = map[string]Expectation{
 var granularityNames = map[string]Granularity{
 	"file":      GranularityFile,
 	"function":  GranularityFunction,
-	"test_case": GranularityTestCase,
-	"comment":   GranularityComment,
+	"test_case":   GranularityTestCase,
+	"comment":     GranularityComment,
+	"declaration": GranularityDeclaration,
 }
 
 var priorityNames = map[string]Priority{

@@ -1,6 +1,6 @@
 ---
 targets: [code]
-granularity: function
+granularity: declaration
 priority: med
 ---
 

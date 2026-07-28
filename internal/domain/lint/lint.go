@@ -120,7 +120,7 @@ func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit 
 	switch granularity {
 	case rule.GranularityFile:
 		return UnitsFor([]string{file})
-	case rule.GranularityFunction, rule.GranularityTestCase, rule.GranularityComment:
+	case rule.GranularityFunction, rule.GranularityTestCase, rule.GranularityComment, rule.GranularityDeclaration:
 		return UnitsFor(leaves)
 	default:
 		panic(fmt.Sprintf("unknown granularity: %d", int(granularity)))
