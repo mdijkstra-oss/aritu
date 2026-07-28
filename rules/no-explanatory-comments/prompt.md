@@ -26,9 +26,11 @@ These are not explanations, and are judged apart from the test above:
 
 - Delete code that has been commented out — example code inside a doc comment is
   documentation, not a leftover.
-- Allow the doc comment an ecosystem mandates on an exported symbol (godoc,
-  JSDoc, docstrings), even where it only gives the signature back. Judge
-  whatever it says beyond that by the test above. Length is never the fault:
-  a paragraph of foreign fact stays where a single restating line on an
-  unexported name goes.
+- Allow the doc comment an ecosystem mandates on a symbol other code imports
+  (godoc, JSDoc, docstrings), even where it only gives the signature back. The
+  allowance is the published surface, not the export keyword: an entry-point
+  module publishes nothing, so a restating line there is judged like any
+  other. Judge whatever a doc comment says beyond the signature by the test
+  above. Length is never the fault: a paragraph of foreign fact stays where a
+  single restating line goes.
 - Allow legal headers, warnings about consequences, and TODO comments.
