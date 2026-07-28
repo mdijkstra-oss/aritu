@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/matthijn/aritu/internal/domain/lint"
-	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/domain/selftest"
 	"github.com/matthijn/aritu/internal/lib/service"
 )
@@ -43,7 +42,7 @@ func (s selftestRun) rules(ctx context.Context, names []string) lint.Exit {
 
 func (s selftestRun) rule(ctx context.Context, name string) lint.Exit {
 	started := time.Now()
-	opts, results, runErr := s.results(ctx, name)
+	opts, results, runErr := selftest.Judge(ctx, s.ask, s.specFor(name))
 
 	if err := selftest.Format(s.out.stdout, opts, results, time.Since(started)); err != nil {
 		fmt.Fprintf(s.out.stderr, "aritu selftest: %v\n", err)
@@ -56,24 +55,15 @@ func (s selftestRun) rule(ctx context.Context, name string) lint.Exit {
 	return selftest.ExitFor(results)
 }
 
-func (s selftestRun) results(ctx context.Context, name string) (selftest.Options, []selftest.Result, error) {
-	opts := selftest.Options{
-		Rule:   rule.Rule{Name: name},
-		Votes:  s.cli.Votes,
-		Model:  s.cli.Model,
-		Effort: s.cli.Effort,
+func (s selftestRun) specFor(name string) selftest.Spec {
+	return selftest.Spec{
+		Name:     name,
+		RulesDir: s.cli.Rules,
+		Known:    s.known,
+		Votes:    s.cli.Votes,
+		Model:    s.cli.Model,
+		Effort:   s.cli.Effort,
 	}
-	loaded, err := rule.Load(s.cli.Rules, name, s.known)
-	if err != nil {
-		return opts, nil, err
-	}
-	opts.Rule = loaded
-
-	fixtures, err := rule.LoadFixtures(loaded)
-	if err != nil {
-		return opts, nil, err
-	}
-	return opts, selftest.Run(ctx, s.ask, opts, fixtures), nil
 }
 
 func worse(a, b lint.Exit) lint.Exit {
