@@ -49,30 +49,39 @@ covers, decide from the goals.
 ## Order
 
 Findings are not equal, and taking them in the order the report prints
-them spends the run on the smallest thing in view. Work outward in: the
-shape of the file, then of a type or a function, then of the expression
-inside one.
+them spends the run on the smallest thing in view. Fix what moves the
+most first.
 
-A file doing several jobs is the biggest mover there is. Splitting it
-relocates whole declarations, and the findings underneath it — the
-seven-argument function, the unnamed inline callback, the derivation
-computed twice — either travel to the file they belong in or stop
-existing once the split lands. Fixing those first is work thrown away,
-and it buries the split's diff under edits nobody can separate from it.
+Which that is, the report says outright: every rule declares a priority,
+and a finding that fell short carries its rule's band beside its name —
+`severe`, then `high`, then `med`. Work the bands in that order. Inside
+one, work outward in: the shape of the file, then of a type or a
+function, then of the expression inside one.
 
-Where two findings overlap, the outer one wins and the inner one is
-re-judged rather than fixed: it may already be gone. A split is a move,
-so it commits on its own before anything inside it is touched.
+A file doing several jobs is the biggest mover there is, which is why
+that rule is severe. Splitting it relocates whole declarations, and the
+findings underneath it — the seven-argument function, the unnamed inline
+callback, the derivation computed twice — either travel to the file they
+belong in or stop existing once the split lands. Fixing those first is
+work thrown away, and it buries the split's diff under edits nobody can
+separate from it.
+
+So a severe finding is not merely first: it is a reason not to act on
+the rest yet. Land it, re-judge, and the lower bands are often shorter
+than they were. Where two findings overlap the outer one wins and the
+inner one is re-judged rather than fixed — it may already be gone. A
+split is a move, so it commits on its own before anything inside it is
+touched.
 
 ## Facts
 
 Local knowledge the goals cannot give you.
 
 - The rules are readable before they are enforced: the rulebook path
-  prints every enabled rule as prose, calling no model. Read it before
-  the first edit rather than after the first report, and hold what you
-  write to it as you write — a violation you author yourself costs a
-  whole judge pass to find.
+  prints every enabled rule as prose under its band, calling no model.
+  Read it before the first edit rather than after the first report, and
+  hold what you write to it as you write — a violation you author
+  yourself costs a whole judge pass to find.
 - A comment you add is a finding waiting to happen. Write none that
   restates the declaration it sits on: a lead sentence naming the
   function and echoing its signature says nothing the reader cannot
