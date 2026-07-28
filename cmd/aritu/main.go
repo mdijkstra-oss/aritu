@@ -256,11 +256,19 @@ func debugReply(req service.Request) (json.RawMessage, error) {
 	if err := json.Unmarshal(req.Schema, &schema); err != nil {
 		return nil, fmt.Errorf("debug reply: %w", err)
 	}
-	answers := make(map[string]map[string]any, len(schema.Properties))
+	answers := make(map[string]debugVerdict, len(schema.Properties))
 	for key := range schema.Properties {
-		answers[key] = map[string]any{"satisfies": true, "reason": "fabricated by --debug, nothing was judged"}
+		answers[key] = debugVerdict{Satisfies: true, Reason: "fabricated by --debug, nothing was judged"}
 	}
 	return json.Marshal(answers)
+}
+
+// debugVerdict is the answer the linter's schema asks for, in the shape the
+// schema requires. Naming it keeps the fabricated pass answering the same keys a
+// real one does, rather than a literal that drifts when the schema moves.
+type debugVerdict struct {
+	Satisfies bool   `json:"satisfies"`
+	Reason    string `json:"reason"`
 }
 
 // callNameFor tells the two calls apart by the schema each carries, which is the
@@ -456,8 +464,6 @@ func workingDir() (string, error) {
 }
 
 // runSelftest runs each named rule against its own fixtures, one table per rule.
-// A rule that cannot be loaded still prints its table, because the table is the
-// diagnostic and an empty one says which rule produced nothing.
 func runSelftest(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit {
 	known, err := knownTargetsFor(cli)
 	if err != nil {
@@ -470,11 +476,7 @@ func runSelftest(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr 
 		return lint.ExitError
 	}
 
-	exit := lint.ExitPass
-	for _, name := range names {
-		exit = worse(exit, selftestRule(ctx, ask, cli, known, name, stdout, stderr))
-	}
-	return exit
+	return selftestRun{ask: ask, cli: cli, known: known, stdout: stdout, stderr: stderr}.rules(ctx, names)
 }
 
 // knownTargetsFor names the kinds a rule may target. selftest consults them only to
@@ -493,29 +495,51 @@ func knownTargetsFor(cli *CLI) ([]string, error) {
 	return kinds.Names(), nil
 }
 
-func selftestRule(ctx context.Context, ask service.Ask, cli *CLI, known []string, name string, stdout, stderr io.Writer) lint.Exit {
-	started := time.Now()
-	opts, results, runErr := selftestResults(ctx, ask, cli, known, name)
+// selftestRun is the half of a selftest sweep that every rule in it shares: the
+// endpoint, the settings, the vocabulary and the streams. Only the rule's name
+// changes from one to the next, so the per-rule calls carry that alone.
+type selftestRun struct {
+	ask    service.Ask
+	cli    *CLI
+	known  []string
+	stdout io.Writer
+	stderr io.Writer
+}
 
-	if err := selftest.Format(stdout, opts, results, time.Since(started)); err != nil {
-		fmt.Fprintf(stderr, "aritu selftest: %v\n", err)
+func (s selftestRun) rules(ctx context.Context, names []string) lint.Exit {
+	exit := lint.ExitPass
+	for _, name := range names {
+		exit = worse(exit, s.rule(ctx, name))
+	}
+	return exit
+}
+
+// rule formats before it reports: a rule that could not be loaded still prints
+// its table, because the table is the diagnostic and an empty one says which
+// rule produced nothing.
+func (s selftestRun) rule(ctx context.Context, name string) lint.Exit {
+	started := time.Now()
+	opts, results, runErr := s.results(ctx, name)
+
+	if err := selftest.Format(s.stdout, opts, results, time.Since(started)); err != nil {
+		fmt.Fprintf(s.stderr, "aritu selftest: %v\n", err)
 		return lint.ExitError
 	}
 	if runErr != nil {
-		fmt.Fprintf(stderr, "aritu selftest: %v\n", runErr)
+		fmt.Fprintf(s.stderr, "aritu selftest: %v\n", runErr)
 		return lint.ExitError
 	}
 	return selftest.ExitFor(results)
 }
 
-func selftestResults(ctx context.Context, ask service.Ask, cli *CLI, known []string, name string) (selftest.Options, []selftest.Result, error) {
+func (s selftestRun) results(ctx context.Context, name string) (selftest.Options, []selftest.Result, error) {
 	opts := selftest.Options{
 		Rule:   rule.Rule{Name: name},
-		Votes:  cli.Votes,
-		Model:  cli.Model,
-		Effort: cli.Effort,
+		Votes:  s.cli.Votes,
+		Model:  s.cli.Model,
+		Effort: s.cli.Effort,
 	}
-	loaded, err := rule.Load(cli.Rules, name, known)
+	loaded, err := rule.Load(s.cli.Rules, name, s.known)
 	if err != nil {
 		return opts, nil, err
 	}
@@ -525,7 +549,7 @@ func selftestResults(ctx context.Context, ask service.Ask, cli *CLI, known []str
 	if err != nil {
 		return opts, nil, err
 	}
-	return opts, selftest.Run(ctx, ask, opts, fixtures), nil
+	return opts, selftest.Run(ctx, s.ask, opts, fixtures), nil
 }
 
 // worse ranks could-not-run above a rule failure, so a sweep where one rule could
