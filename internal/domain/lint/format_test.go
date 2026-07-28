@@ -46,7 +46,7 @@ func TestFormat(t *testing.T) {
 					"TestIsUnanimous (every count at the total)":   0,
 					"TestIsUnanimous (a single vote at the total)": 1,
 					"TestIsUnanimous (an empty tally)":             2,
-					"TestSlugify": 0,
+					"TestSlugify":                                  0,
 				},
 				Reasons: map[string][]string{
 					"TestIsUnanimous (every count at the total)":   {"names the input and never says what it returns"},
@@ -98,7 +98,7 @@ func TestFormat(t *testing.T) {
 			},
 			want: "named-for-behavior  empty_test.go\n" +
 				"\n" +
-				"  no test units found\n" +
+				"  no units to judge\n" +
 				"\n",
 		},
 	}

@@ -29,7 +29,7 @@ func Format(w io.Writer, r Report, colour bool) error {
 		return err
 	}
 	if len(r.Verdicts) == 0 {
-		fmt.Fprintf(&b, "  %sno test units found%s\n\n", p.dim, p.reset)
+		fmt.Fprintf(&b, "  %sno units to judge%s\n\n", p.dim, p.reset)
 		_, err := io.WriteString(w, b.String())
 		return err
 	}
