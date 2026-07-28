@@ -52,10 +52,10 @@ func TestTheSplitterCarriesNoRule(t *testing.T) {
 // tests.
 func TestEachKindDescribesItsOwnUnitAndNoOther(t *testing.T) {
 	tests := []struct {
-		name        string
-		rendered    string
-		want        string
-		wantAbsent  string
+		name       string
+		rendered   string
+		want       string
+		wantAbsent string
 	}{
 		{
 			name:       "the function linter names declarations, not tests",
