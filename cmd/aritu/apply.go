@@ -15,7 +15,7 @@ func runApply(ctx context.Context, cli *CLI, ask service.Ask, out streams) lint.
 	opts, setupErr := applyOptions(cli)
 	report := reporterFor(cli.Output, out.stdout, wantsColour(out.stdout))
 	if cli.Debug {
-		report = silentReporter()
+		report = run.Silent()
 	}
 
 	var results []run.Result
@@ -23,10 +23,10 @@ func runApply(ctx context.Context, cli *CLI, ask service.Ask, out streams) lint.
 		if !cli.Debug {
 			run.Announce(out.stderr, opts)
 		}
-		opts.Observe = report.observe
+		opts.Observe = report.Observe
 		results = run.Run(ctx, ask, opts)
 	}
-	if err := report.finish(outcome{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
+	if err := report.Finish(run.Outcome{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
 		fmt.Fprintf(out.stderr, "aritu apply: %v\n", err)
 		return lint.ExitError
 	}
