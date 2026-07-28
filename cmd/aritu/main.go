@@ -25,10 +25,6 @@ import (
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
-func main() {
-	os.Exit(int(execute(os.Args[1:], os.Stdout, os.Stderr)))
-}
-
 // CLI is the whole command line. Every flag sits at the root because a repository
 // has one answer to which model and how many votes, and aritu.yml answers them
 // once for both commands rather than once per subcommand.
@@ -123,6 +119,10 @@ func (ApplyCmd) Help() string { return exitCodes }
 // Help is the exit-code table, generated into the command's help from the same
 // place the codes are decided rather than maintained beside it.
 func (SelftestCmd) Help() string { return exitCodes }
+
+func main() {
+	os.Exit(int(execute(os.Args[1:], os.Stdout, os.Stderr)))
+}
 
 // execute is main's body with the writers passed in, so a whole invocation can be
 // driven against buffers rather than the process's own streams.
