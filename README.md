@@ -1,21 +1,22 @@
 # aritu
 
-A shield against tests that do not earn their keep.
+A shield against code that does not earn its keep.
 
 ![Claude is an expert](assets/claude-is-an-expert.jpeg)
 
-aritu is an LLM linter for tests. You give it a rule and a test file; it asks a
+aritu is an LLM linter. You give it a rule written in prose and a file; it asks a
 model whether each unit of that file satisfies the rule, several times over, and
-reports how many runs agreed. Run it in CI or from a pre-commit hook to stop tests
-that assert nothing, prove nothing, or mock away the thing they claim to cover.
+reports how many runs agreed. Run it in CI or from a pre-commit hook to hold code
+to the standards no parser can check: the comment that restates its code, the name
+that says nothing, the file doing three jobs, the test that proves nothing.
 
 **A rule you put in a prompt is a request.** Nothing reads the code back
 afterwards, nothing disagrees, and nothing fails: whether the rule was followed
 comes down to whether the model was inclined to follow it, and the only account of
 that is a diff summarised by the same model that wrote it. aritu is that same
 standard made checkable — a verdict per unit with a reason, a majority of runs
-that has to agree before anything passes, and a non-zero exit code out of a hook. Being told
-becomes being held to it.
+that has to agree before anything passes, and a non-zero exit code out of a hook.
+Being told becomes being held to it.
 
 The same rules come back out as a document. `aritu rulebook` writes them out in
 full, which is what you hand an agent as its `AGENTS.md` — and it is the very text
@@ -44,19 +45,19 @@ beside them, so it cannot drift.
 
 ```sh
 # every rule that is about it, over one file
-aritu apply internal/parser/parser_test.go
+aritu apply internal/parser/parser.go
 
 # everything the enabled rules target
 aritu apply
 
 # every rule over everything a pattern matches
-aritu apply 'internal/**/*_test.go'
+aritu apply 'internal/**/*.go'
 
 # one rule, several patterns
-aritu apply --rule proves-what-it-claims 'internal/**/*_test.go' 'cmd/**/*_test.go'
+aritu apply --rule single-purpose-functions 'internal/**/*.go' 'cmd/**/*.go'
 
 # the same rules over another ecosystem, with no flag to say so
-aritu apply 'src/**/*.test.ts' 'tests/test_*.py'
+aritu apply 'src/**/*.ts' 'lib/**/*.py'
 
 # check the rules themselves against their own fixtures
 aritu selftest --votes 4
@@ -85,15 +86,15 @@ Omit `--rule` and every rule in the rules directory runs; repeat it to pick a fe
 `apply` prints a report grouped by file, then by rule:
 
 ```
-internal/parser/parser_test.go
-  proves-what-it-claims
-    ✓ TestParseConfig (extracts host before colon)
-    ! TestParseConfig (rejects blank input) (1 of 2)
-      one run read the name as stating an outcome and one did not
-    ✗ TestParseConfig (host and port)
-      names the input the case supplies rather than the outcome it protects
-  tests-one-thing
-    ✓ TestParseConfig
+internal/parser/parser.go
+  intent-revealing-names
+    ✓ parseConfig
+    ! splitHostPort (1 of 2)
+      one run read the name as carrying its intent and one did not
+    ✗ handle
+      names what the function is attached to, not what it does for the caller
+  single-purpose-functions
+    ✓ parseConfig
 
   2 passed  ·  2 failed  ·  1 split  ·  1 file, 2 rules, 2 votes  ·  4.1s
 ```
@@ -119,12 +120,12 @@ get plain text, so what you capture is what you read.
 {
   "reports": [
     {
-      "rule": "proves-what-it-claims",
-      "file": "internal/parser/parser_test.go",
+      "rule": "intent-revealing-names",
+      "file": "internal/parser/parser.go",
       "votes": 2,
-      "verdicts": { "TestParseConfig (host and port)": 0 },
+      "verdicts": { "handle": 0 },
       "reasons": {
-        "TestParseConfig (host and port)": ["names the input the case supplies rather than the outcome it protects"]
+        "handle": ["names what the function is attached to, not what it does for the caller"]
       }
     }
   ]
@@ -132,12 +133,13 @@ get plain text, so what you capture is what you read.
 ```
 
 Each verdict is how many of the `votes` runs judged that unit to satisfy the rule.
-**A unit passes only at full agreement.** Every other count is a failure — `0` and
-`3` of `4` alike.
+**A unit passes on a strict majority.** A tie is not a majority, so it fails —
+half the votes convinced is not a rule being followed.
 
-The count is not a second verdict. It is how close the prompt is. `3` of `4` is a
-rule nearly working; `0` of `4` on a test that should pass is a rule that is
-broken. Both fail, and the number is what tells them apart while you tune.
+The count is not a second verdict. It is how close the vote was, which is what you
+tune a prompt against: `0` of `4` on code that should pass is a rule that is
+broken, and a count hovering around the middle is a prompt that has not decided
+what it thinks. The number is what tells them apart while you tune.
 
 `reasons` carries one sentence per dissenting run, for units that fell short. A
 pass has nothing to explain, so it is omitted.
@@ -154,10 +156,10 @@ pass has nothing to explain, so it is omitted.
 genuinely failed did not check everything, and reporting that as an ordinary rule
 failure would let a hook treat a partial sweep as a complete one.
 
-A split vote is not a third outcome and never becomes `2`. The rule is "all votes
-agree"; a split does not meet it, so it fails. Filing it under "could not run"
-would invite a hook to treat an unsure model as a tooling problem and skip past
-exactly the test aritu exists to catch.
+A split vote is not a third outcome and never becomes `2`. The rule is a strict
+majority in favour; a tie does not meet it, so it fails. Filing it under "could
+not run" would invite a hook to treat an unsure model as a tooling problem and
+skip past exactly the case aritu exists to catch.
 
 Output is always written before exiting, including on `2`. The counts are the whole
 diagnostic; suppressing them on failure removes the reason to have them.
@@ -178,10 +180,10 @@ aritu rulebook > AGENTS.md
 The following rules must be abided by. Read them before writing anything they are
 about, and check what you wrote against them before calling it done.
 
-## Tests one thing
+## Intent revealing names
 
-A test must have one reason to fail: it pins down a single behaviour, however many
-assertions it takes to do so. ...
+A name carries the intent of what it names; the reader should never have to
+decode it. ...
 ```
 
 One heading per rule and the whole of that rule under it, in the order the rules
@@ -230,7 +232,7 @@ output: pretty
 
 rules:
   dir: ./rules
-  enabled: [proves-what-it-claims, tests-one-thing]   # omit for all
+  enabled: [intent-revealing-names, single-purpose-functions]   # omit for all
 
 targets:
   tests: ['internal/**/*_test.go', 'cmd/**/*_test.go']   # replaces the built-in
@@ -270,7 +272,7 @@ rule you write can then be about.
 
 You do not have to override anything to keep the sweep off your own rules. Nothing
 under the rules directory is ever derived into it: what sits there is rule material
-rather than your work, and a `fail-` fixture is a bad test written on purpose, which
+rather than your work, and a `fail-` fixture is a bad file written on purpose, which
 `selftest` judges against the expectation its directory name carries. Name one as a
 pattern and it is still judged — that was asked for.
 
@@ -289,18 +291,15 @@ A rule is a directory. One rule per directory, under `rules/` by default
 
 ```
 rules/
-  tests-one-thing/
+  single-purpose-functions/
     prompt.md
     fixtures/
-      pass-go-table-of-inputs-to-one-behavior/
-        discount.go
-        discount_test.go
-      pass-ts-grouped-tests-are-separate-units/
-        cart.ts
-        cart.test.ts
-      fail-go-table-mixes-values-and-rejections/
-        duration.go
-        duration_test.go
+      pass-focused-render/
+        render.ts
+      fail-hidden-side-effect/
+        report.go
+      fail-many-arguments/
+        billing.py
 ```
 
 ### Parking a rule
@@ -319,7 +318,7 @@ sweep: what was **derived** leaves parked rules alone, and what was **asked for*
 overrules that.
 
 A rule's `prompt.md` is only its criterion. Everything every rule would otherwise
-repeat — what judging means, that tests come in many shapes across ecosystems and
+repeat — what judging means, that code comes in many shapes across ecosystems and
 the behaviour is judged rather than the syntax, what a unit is, how to write a
 reason — lives in `prompts/`, embedded in the binary, one folder per model call
 and one file per unit kind:
@@ -348,11 +347,11 @@ nothing about tests, which is what makes a rule about anything else possible.
 
 ```markdown
 ---
-targets: [tests]
-include_source: false
-granularity: test_case
+targets: [code]
+granularity: function
 ---
-A test's verdict must hang on the behaviour it is named for...
+A name carries the intent of what it names; the reader should never have to
+decode it...
 ```
 
 There is no key for the rule's name or its summary. The heading comes from the
@@ -360,11 +359,11 @@ directory name, and the body is the whole of what the rule says — to the model
 judges it and, through [`rulebook`](#the-rulebook), to whoever is about to write the
 file. Nothing is stated twice, so nothing can disagree with itself.
 
-`targets` names the kinds of file the rule is about, and is what makes a rule about
-something other than tests runnable: aritu ships `tests`, `code` and `docs`, and
-`aritu.yml` can replace any of them or add its own. `code` deliberately overlaps
-`tests` — a test file has comments like any other source file — because kinds are
-named matchers rather than a partition of the tree.
+`targets` names the kinds of file the rule is about: aritu ships `tests`, `code`
+and `docs`, and `aritu.yml` can replace any of them or add its own. `code`
+deliberately overlaps `tests` — a test file has comments and names like any other
+source file — because kinds are named matchers rather than a partition of the
+tree.
 
 `targets` and `granularity` are required, and a missing one is an error naming the
 key. Defaulting either silently changes which files reach the model or what it
@@ -374,46 +373,34 @@ nothing, and exit `0`. So an unknown kind fails when the rule is loaded, naming 
 ones there are, before a single model call — and so does an empty list, which is a
 rule that could never run.
 
-`include_source` and `granularity` are also what decides which properties can share
-a rule: two properties that disagree about either cannot share a verdict call
-however similar they read.
+### Grouping properties into rules
 
-### The seven rules
+Dozens of separate properties can make a file worth keeping. One rule per property
+would be dozens of verdict calls per file per vote and as many prompts to keep from
+contradicting each other. So properties group, by **judgement** — the same question
+asked of the same unit with the same evidence in front of the model. Two
+properties that agree on `granularity` and `include_source` can share a verdict
+call; two that disagree about either cannot, however similar they read.
 
-Roughly twenty-five separate properties make a test worth keeping. One rule per
-property would be twenty-five verdict calls per file per vote and twenty-five
-prompts to keep from contradicting each other. So they group, by **judgement** — the
-same question asked of the same unit with the same evidence in front of the model:
+The grouping is what keeps the cost linear. Per file, per vote: one enumeration
+call per granularity that needs one, shared by every rule at that level, plus one
+verdict call per rule. `file`-granularity rules are the cheap ones — `file` needs
+no enumeration and its schema has one key.
 
-| rule | granularity | `include_source` | |
-|---|---|---|---|
-| **`tests-one-thing`** | `function` | `false` | every assertion serves one claim |
-| **`tests-behavior-not-implementation`** | `function` | `true` | binds to the caller's seam, asserts what and not how |
-| **`proves-what-it-claims`** | `test_case` | `true` | remove the named behaviour and this unit goes red |
-| **`self-contained`** | `file` | `false` | same verdict on any machine, in any order, at any time |
-| **`readable`** | `function` | `false` | a stranger can tell what it establishes, and what broke |
-| **`no-redundancy`** | `file` | `true` | no two tests assert one behaviour from one equivalence class |
-| **`no-gaps`** | `file` | `true` | every distinct outcome the code can produce is asserted |
-
-Per file, per vote: one enumeration call per granularity that needs one, shared by
-every rule at that level, plus one verdict call per rule. Seven rules cost nine
-calls. The three `file`-granularity rules are the cheap ones — `file` needs no
-enumeration and its schema has one key.
-
-The cost that is not calls: a `file`-granularity failure returns one verdict and one
-sentence for a whole test file. `reasons` carries one entry per dissenting run, which
-softens it, and coverage genuinely is a property of the whole file — but it is
-thinner guidance than a per-test rejection, and that is a known trade.
+The cost that is not calls: a `file`-granularity failure returns one verdict and
+one sentence for a whole file. `reasons` carries one entry per dissenting run,
+which softens it, and some properties genuinely are properties of the whole file —
+but it is thinner guidance than a per-unit rejection, and that is a known trade.
 
 ### Finding the file under test
 
 `include_source` decides what the model sees. It defaults to `false`, which sends
-the file alone: finding a file under test is only meaningful for a rule about
-tests, so a rule writes the key out only when it wants the pairing. With `true` the
-implementation goes too — four of the seven test rules need it,
-because whether an identifier is a subject's surface or its internals, whether two
-inputs land in one equivalence class, and what outcomes are missing are all facts
-about the code rather than about the test.
+the file alone: pairing a file with the implementation it covers is only
+meaningful for a rule about tests, so a rule writes the key out only when it wants
+the pairing. With `true` the implementation goes too — whether an identifier is a
+subject's surface or its internals, whether two inputs land in one equivalence
+class, and what outcomes are missing are all facts about the code rather than
+about the test.
 
 Resolution is a **search, not a derivation**: a mirrored source tree cannot be
 reached by swapping a suffix, so aritu offers ordered candidates and takes the first
@@ -441,7 +428,7 @@ set judge every ecosystem.
 - **`test_case`** — one per **leaf** of that: one row of a table, one parametrised
   argument set, one subdivision declared inside the test, or the test itself when it
   has none.
-- **`file`** — one, keyed by the path. Relations *between* tests live only here.
+- **`file`** — one, keyed by the path. Relations *between* units live only here.
 
 **Enclosing scopes are namespace prefixes, not levels.** A grouping block, a fixture
 class or an outer suite qualifies a name and is joined into it with ` > `. It does
@@ -458,11 +445,11 @@ not change what is being judged.
 | `class ParserTest` + `@Test rejectsBlank` | `ParserTest > rejectsBlank` | `ParserTest > rejectsBlank` |
 
 The asymmetry in rows two and three is load-bearing. Two subtests in one function
-are **one** `function`-level unit, so `tests-one-thing` sees both and rejects them —
+are **one** `function`-level unit, so a rule at that level sees both together —
 correct, because that is one language's shape for two behaviours sharing a name. Two
-`it`s in one `describe` are **two** `function`-level units, so each is judged alone
-and both pass — also correct, because a `describe` is a grouping construct and
-grouping is what it is for.
+`it`s in one `describe` are **two** `function`-level units, so each is judged alone —
+also correct, because a `describe` is a grouping construct and grouping is what it
+is for.
 
 **The unit judged is the whole identifier**, which is also what a test runner prints
 when a case fails. No part has to carry the meaning alone:
@@ -479,21 +466,21 @@ that now has to carry every claim at once.
 
 ### Writing a rule
 
-State **both poles**: the property a test must have, and the shapes that
+State **both poles**: the property a unit must have, and the shapes that
 disqualify it. A prompt given only one pole drifts toward answering everything the
 same way, and a rule that never fires is indistinguishable from a rule that always
 passes. A grouped rule needs the second pole more than a narrow one did, because it
 has several ways to be wrong and several near-misses to spare.
 
-Then prove it with fixtures. Each fixture is its own directory holding exactly one
-test file and the implementation it covers — one directory per fixture because files
-in one directory often share a namespace, so two fixtures both declaring `TestFoo`
-would collide. The `pass-`/`fail-` prefix carries the expectation and a language
-segment follows it, so the four coverage floors are visible in the listing:
+Then prove it with fixtures. Each fixture is its own directory holding exactly the
+file to be judged — and, for a rule about tests, the implementation it covers. One
+directory per fixture because files in one directory often share a namespace, so
+two fixtures declaring the same name would collide. The `pass-`/`fail-` prefix
+carries the expectation, so the coverage floors are visible in the listing:
 
-1. Every rule carries at least one pass and one fail fixture **in each of Go,
-   TypeScript, Python and Java**. This is the only thing that proves a prompt is not
-   quietly shaped around one ecosystem.
+1. A rule's fixtures span ecosystems — the same property proved in Go and
+   TypeScript and Python. This is the only thing that shows a prompt is not
+   quietly shaped around one language's idioms.
 2. Every disqualifying shape a prompt names has a fail fixture, in whichever
    language expresses that shape most naturally.
 3. Every near-miss a prompt calls out as satisfying has a pass fixture. These are
@@ -502,20 +489,21 @@ segment follows it, so the four coverage floors are visible in the listing:
 `selftest` checks every fixture against its prefix:
 
 ```
-rule: proves-what-it-claims  model: sonnet  votes: 4
+rule: intent-revealing-names  model: sonnet  votes: 4
 
-FIXTURE                                          EXPECT  RESULT  TIME     VERDICTS
-fail-java-asserts-only-that-nothing-threw        fail    hold    1m23.2s  parsesTheHostFromAnAddress=0 parsesThePortFromAnAddress=0
-fail-py-numbered-cases-under-a-bare-test         fail    hold    30.7s    test_slugify (case 1)=0 test_slugify (case 2)=0 ...
-pass-py-numbered-cases-under-a-stated-behaviour  pass    hold    45.1s    test_rejects_ports_above_the_maximum (case 1)=4 ...
-pass-ts-terse-names-state-outcomes               pass    hold    14.1s    clampPercent > caps at 100=4 clampPercent > floors at 0=4 ...
+FIXTURE                        EXPECT  RESULT  TIME   VERDICTS
+fail-cryptic-names             fail    hold    31.2s  d=0 hndl=0 proc=0
+fail-unsearchable-magic-number fail    hold    28.7s  applyDiscount=0
+fail-unnamed-condition         fail    hold    30.1s  renderBanner=0
+pass-descriptive-billing       pass    hold    45.1s  daysSinceLastInvoice=4 markInvoiceOverdue=4
 
 14/14 fixtures hold in 2m27.7s
 ```
 
-The two `numbered-cases` fixtures are the pair that keeps this rule honest: numbered case
-labels are a violation under a test that states no behaviour and are not one under a test
-that does, and only having both in the set proves the rule can tell them apart.
+A fail fixture and the pass fixture nearest to it are the pair that keeps a rule
+honest: the same surface shape is a violation in one and not in the other, and
+only having both in the set proves the rule judges the property rather than the
+shape.
 
 A fixture's files are named by its directory, never by a kind: a rule's `targets`
 are not consulted anywhere in a `selftest` run. Otherwise a rule's self-test would
@@ -525,7 +513,7 @@ depend on the `aritu.yml` of whichever repository the rule happened to sit in.
 only the comparison against the directory prefix and the table. It compares counts,
 never exit codes: a `pass-` fixture holds at `votes`, a `fail-` fixture holds at
 `0`. Anything between the poles fails, including a `fail-` fixture the model only
-mostly rejected — a rule that needs a dissenting vote to fire is one bad test away
+mostly rejected — a rule that needs a dissenting vote to fire is one bad file away
 from missing.
 
 ## How it calls the model
@@ -554,7 +542,7 @@ problem.
 
 If a verdict still arrives naming a unit the enumeration did not list, that is an
 error and exit `2` — never a silent merge. Models are unreliable at exhaustive
-enumeration, and a quietly dropped test is the precise failure this tool exists to
+enumeration, and a quietly dropped unit is the precise failure this tool exists to
 catch.
 
 At `file` granularity the first call is skipped entirely: the unit is the path,
