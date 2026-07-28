@@ -26,7 +26,7 @@ func runApply(ctx context.Context, cli *CLI, ask service.Ask, out streams) lint.
 		opts.Observe = report.observe
 		results = run.Run(ctx, ask, opts)
 	}
-	if err := report.finish(sweep{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
+	if err := report.finish(outcome{Results: results, Options: opts, Elapsed: time.Since(started)}); err != nil {
 		fmt.Fprintf(out.stderr, "aritu apply: %v\n", err)
 		return lint.ExitError
 	}
