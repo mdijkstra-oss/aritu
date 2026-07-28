@@ -96,6 +96,11 @@ shape of the edit, and the rules are already the reason the file was opened.
 
 Local knowledge the goals cannot give you.
 
+- Read the judge's output whole. Piping it through `tail`, `head` or a grep
+  keeps the per-file findings and drops everything around them — a setup
+  error, a target that could not be run, the exit code that outranks a miss —
+  and those are the lines that change what to do next rather than which edit
+  to make.
 - The rules are readable before they are enforced: the rulebook path prints
   every enabled rule as prose under its band, calling no model. Read it before
   the first edit, and hold what you write to it as you write — a violation you
