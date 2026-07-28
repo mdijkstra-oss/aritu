@@ -5,7 +5,24 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/matthijn/aritu/internal/domain/lint"
 )
+
+// Envelope is the --output json shape. The top level is no longer one report, and
+// emitting a bare report for a single target would make every consumer branch.
+type Envelope struct {
+	Reports []lint.Report `json:"reports"`
+}
+
+// EnvelopeOf collects the reports for JSON output, in the same order Format prints.
+func EnvelopeOf(results []Result) Envelope {
+	reports := make([]lint.Report, 0, len(results))
+	for _, result := range results {
+		reports = append(reports, result.Report)
+	}
+	return Envelope{Reports: reports}
+}
 
 // Outcome is everything a finished run has to say for itself.
 type Outcome struct {
