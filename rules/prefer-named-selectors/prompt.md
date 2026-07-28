@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: file
+priority: med
 ---
 
 A derived value computed in more than one place deserves a name — a selector: a pure function, data in, derived data out.

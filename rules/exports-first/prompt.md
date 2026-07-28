@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: file
+priority: med
 ---
 
 A file reads top-down: public contract first, private detail after.

@@ -22,27 +22,27 @@ func TestParsePrompt(t *testing.T) {
 		{
 			name: "include_source true",
 			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n\nJudge the test.\n",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: "Judge the test.\n"},
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Priority: PriorityMed, Targets: []string{"tests"}, Body: "Judge the test.\n"},
 		},
 		{
 			name: "include_source false",
 			raw:  "---\ntargets: [tests]\ninclude_source: false\ngranularity: test_case\n---\nJudge the test.",
-			want: Prompt{IncludeSource: false, Granularity: GranularityTestCase, Targets: []string{"tests"}, Body: "Judge the test."},
+			want: Prompt{IncludeSource: false, Granularity: GranularityTestCase, Priority: PriorityMed, Targets: []string{"tests"}, Body: "Judge the test."},
 		},
 		{
 			name: "a rule may target a kind that is not about tests at all",
 			raw:  "---\ntargets: [docs]\ninclude_source: false\ngranularity: file\n---\nbody",
-			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"docs"}, Body: "body"},
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Priority: PriorityMed, Targets: []string{"docs"}, Body: "body"},
 		},
 		{
 			name: "a rule may target several kinds",
 			raw:  "---\ntargets: [code, docs]\ninclude_source: false\ngranularity: file\n---\nbody",
-			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"code", "docs"}, Body: "body"},
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Priority: PriorityMed, Targets: []string{"code", "docs"}, Body: "body"},
 		},
 		{
 			name: "a kind the repository declared is targetable like a built-in one",
 			raw:  "---\ntargets: [migrations]\ninclude_source: false\ngranularity: file\n---\nbody",
-			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"migrations"}, Body: "body"},
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Priority: PriorityMed, Targets: []string{"migrations"}, Body: "body"},
 		},
 		{
 			name:    "missing targets key",
@@ -72,22 +72,22 @@ func TestParsePrompt(t *testing.T) {
 		{
 			name: "body keeps its own delimiters and blank lines",
 			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n\n\nfirst\n\n---\nlast\n",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: "first\n\n---\nlast\n"},
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Priority: PriorityMed, Targets: []string{"tests"}, Body: "first\n\n---\nlast\n"},
 		},
 		{
 			name: "empty body",
 			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: ""},
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Priority: PriorityMed, Targets: []string{"tests"}, Body: ""},
 		},
 		{
 			name: "other frontmatter keys are ignored",
 			raw:  "---\ntitle: one reason to fail\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\nbody",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Targets: []string{"tests"}, Body: "body"},
+			want: Prompt{IncludeSource: true, Granularity: GranularityFunction, Priority: PriorityMed, Targets: []string{"tests"}, Body: "body"},
 		},
 		{
 			name: "an omitted include_source leaves the file judged on its own, without the file under test",
 			raw:  "---\ntargets: [code]\ngranularity: file\n---\nbody",
-			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Targets: []string{"code"}, Body: "body"},
+			want: Prompt{IncludeSource: false, Granularity: GranularityFile, Priority: PriorityMed, Targets: []string{"code"}, Body: "body"},
 		},
 		{
 			name:    "missing granularity key",
@@ -102,7 +102,7 @@ func TestParsePrompt(t *testing.T) {
 		{
 			name: "granularity file",
 			raw:  "---\ntargets: [tests]\ninclude_source: true\ngranularity: file\n---\nbody",
-			want: Prompt{IncludeSource: true, Granularity: GranularityFile, Targets: []string{"tests"}, Body: "body"},
+			want: Prompt{IncludeSource: true, Granularity: GranularityFile, Priority: PriorityMed, Targets: []string{"tests"}, Body: "body"},
 		},
 		{
 			name:    "empty frontmatter",
@@ -396,19 +396,19 @@ func TestLoad(t *testing.T) {
 			name:  "include_source true",
 			files: map[string]string{"one-reason-to-fail/prompt.md": "---\ntargets: [tests]\ninclude_source: true\ngranularity: function\n---\n\nOne behavior.\n"},
 			rule:  "one-reason-to-fail",
-			want:  Rule{Name: "one-reason-to-fail", Prompt: "One behavior.\n", Targets: []string{"tests"}, IncludeSource: true, Granularity: GranularityFunction},
+			want:  Rule{Name: "one-reason-to-fail", Prompt: "One behavior.\n", Targets: []string{"tests"}, IncludeSource: true, Granularity: GranularityFunction, Priority: PriorityMed},
 		},
 		{
 			name:  "include_source false",
 			files: map[string]string{"named-for-behavior/prompt.md": "---\ntargets: [tests]\ninclude_source: false\ngranularity: test_case\n---\nName it.\n"},
 			rule:  "named-for-behavior",
-			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", Targets: []string{"tests"}, IncludeSource: false, Granularity: GranularityTestCase},
+			want:  Rule{Name: "named-for-behavior", Prompt: "Name it.\n", Targets: []string{"tests"}, IncludeSource: false, Granularity: GranularityTestCase, Priority: PriorityMed},
 		},
 		{
 			name:  "a rule about a kind that is not tests loads the same way",
 			files: map[string]string{"prose-is-legible/prompt.md": "---\ntargets: [docs]\ninclude_source: false\ngranularity: file\n---\nRead it.\n"},
 			rule:  "prose-is-legible",
-			want:  Rule{Name: "prose-is-legible", Prompt: "Read it.\n", Targets: []string{"docs"}, IncludeSource: false, Granularity: GranularityFile},
+			want:  Rule{Name: "prose-is-legible", Prompt: "Read it.\n", Targets: []string{"docs"}, IncludeSource: false, Granularity: GranularityFile, Priority: PriorityMed},
 		},
 		{
 			name:    "a rule targeting a kind this repository never defined",

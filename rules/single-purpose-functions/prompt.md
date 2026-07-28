@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: function
+priority: high
 ---
 
 A function does one kind of thing, and its signature tells the whole story.

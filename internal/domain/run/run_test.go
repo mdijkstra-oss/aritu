@@ -676,6 +676,57 @@ func TestFormat(t *testing.T) {
 	}
 }
 
+// TestFormatBannersPriorityOnlyWhereSomethingFellShort pins what the priority is
+// for: triage. A reader scanning a sweep needs to know which of the failures to
+// open first, and a severity beside a rule that passed answers no question.
+func TestFormatPrintsPriorityOnlyWhereSomethingFellShort(t *testing.T) {
+	opts := Options{Rules: []rule.Rule{byBehaviour}, Files: []string{"alpha_test.go"}, Votes: 2}
+
+	tests := []struct {
+		name    string
+		report  lint.Report
+		wantRow string
+	}{
+		{
+			name: "a rule that fell short carries its priority",
+			report: lint.Report{
+				Rule: "named-for-behavior", Priority: "severe", File: "alpha_test.go", Votes: 2,
+				Verdicts: map[string]int{"TestAlpha": 0},
+			},
+			wantRow: "  named-for-behavior  severe  100ms\n",
+		},
+		{
+			name: "a rule that passed carries nothing",
+			report: lint.Report{
+				Rule: "named-for-behavior", Priority: "severe", File: "alpha_test.go", Votes: 2,
+				Verdicts: map[string]int{"TestAlpha": 2},
+			},
+			wantRow: "  named-for-behavior  100ms\n",
+		},
+		{
+			name: "a rule that could not run carries its priority",
+			report: lint.Report{
+				Rule: "named-for-behavior", Priority: "high", File: "alpha_test.go", Votes: 2,
+				Verdicts: map[string]int{}, Error: "no such file",
+			},
+			wantRow: "  named-for-behavior  high  100ms\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			results := []Result{{Report: tc.report, Duration: 100 * time.Millisecond}}
+			if err := Format(&out, results, opts, time.Second, false); err != nil {
+				t.Fatalf("Format returned %v", err)
+			}
+			if !strings.Contains(out.String(), tc.wantRow) {
+				t.Errorf("Format wrote:\n%s\nwant a row %q", out.String(), tc.wantRow)
+			}
+		})
+	}
+}
+
 func TestFormatEmitsColourOnlyWhenAsked(t *testing.T) {
 	results := []Result{{
 		Report: lint.Report{

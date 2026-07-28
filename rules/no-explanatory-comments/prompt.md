@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: file
+priority: med
 ---
 
 A comment is an unchecked claim: nothing fails when it lies, so it drifts. Every

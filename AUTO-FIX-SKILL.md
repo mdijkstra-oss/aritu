@@ -46,10 +46,40 @@ covers, decide from the goals.
    file means the fix oscillates or the rule is confused: roll back to the
    last green commit, note it under rule-issues, close it out, move on.
 
+## Order
+
+Findings are not equal, and taking them in the order the report prints
+them spends the run on the smallest thing in view. Work outward in: the
+shape of the file, then of a type or a function, then of the expression
+inside one.
+
+A file doing several jobs is the biggest mover there is. Splitting it
+relocates whole declarations, and the findings underneath it — the
+seven-argument function, the unnamed inline callback, the derivation
+computed twice — either travel to the file they belong in or stop
+existing once the split lands. Fixing those first is work thrown away,
+and it buries the split's diff under edits nobody can separate from it.
+
+Where two findings overlap, the outer one wins and the inner one is
+re-judged rather than fixed: it may already be gone. A split is a move,
+so it commits on its own before anything inside it is touched.
+
 ## Facts
 
 Local knowledge the goals cannot give you.
 
+- The rules are readable before they are enforced: the rulebook path
+  prints every enabled rule as prose, calling no model. Read it before
+  the first edit rather than after the first report, and hold what you
+  write to it as you write — a violation you author yourself costs a
+  whole judge pass to find.
+- A comment you add is a finding waiting to happen. Write none that
+  restates the declaration it sits on: a lead sentence naming the
+  function and echoing its signature says nothing the reader cannot
+  already see. Write none that mentions a rule, a finding, or why the
+  edit satisfies one — that is code commenting on its own linting. When
+  a fix relocates an existing comment, carry the why across and drop the
+  sentence that introduced it.
 - Nothing under the rules directory is ever queued or fixed: the fail-
   fixtures are wrong on purpose.
 - A move mixed with edits renders as delete-plus-add, the one diff shape

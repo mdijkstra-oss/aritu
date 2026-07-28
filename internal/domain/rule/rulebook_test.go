@@ -7,7 +7,17 @@ import "testing"
 // rather than a silent one the test agrees with by construction.
 const preamble = "# Coding rules\n\n" +
 	"The following rules must be abided by. Read them before writing anything they are\n" +
-	"about, and check what you wrote against them before calling it done.\n"
+	"about, and check what you wrote against them before calling it done.\n\n" +
+	"They are grouped by what a violation costs. Where a file breaks rules in more\n" +
+	"than one band, the higher band goes first: its fix moves the code the lower ones\n" +
+	"are about.\n"
+
+// The band headings are spelled out for the same reason the preamble is.
+const (
+	severeBand = "\n## Severe\n\nFix these before anything below them. The fix relocates the code around it, and findings nested inside one often go with it.\n"
+	highBand   = "\n## High\n\nA shape callers depend on. The fix reaches past the declaration that carries it, so it lands after the structural work above.\n"
+	medBand    = "\n## Medium\n\nLocal enough to fix where it stands: a rename, a move, a deletion. Nothing here blocks the work above it.\n"
+)
 
 func TestTitle(t *testing.T) {
 	tests := []struct {
@@ -47,8 +57,10 @@ func TestSectionIsTheWholeRuleUnderItsDerivedHeading(t *testing.T) {
 }
 
 func TestRulebook(t *testing.T) {
-	oneThing := Rule{Name: "tests-one-thing", Prompt: "A test must have one reason to fail."}
-	selfContained := Rule{Name: "self-contained", Prompt: "A suite must produce the same verdict anywhere."}
+	oneThing := Rule{Name: "tests-one-thing", Prompt: "A test must have one reason to fail.", Priority: PriorityMed}
+	selfContained := Rule{Name: "self-contained", Prompt: "A suite must produce the same verdict anywhere.", Priority: PriorityMed}
+	oneJob := Rule{Name: "one-job", Prompt: "A file has one job.", Priority: PrioritySevere}
+	fewArguments := Rule{Name: "few-arguments", Prompt: "A signature tells the whole story.", Priority: PriorityHigh}
 
 	tests := []struct {
 		name  string
@@ -56,16 +68,34 @@ func TestRulebook(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "a rule becomes its derived heading with the whole rule under it",
+			name:  "a rule becomes its derived heading under the band it declared",
 			rules: []Rule{oneThing},
-			want:  preamble + "\n## Tests one thing\n\nA test must have one reason to fail.\n",
+			want:  preamble + medBand + "\n### Tests one thing\n\nA test must have one reason to fail.\n",
 		},
 		{
-			name:  "several rules keep the order they were enabled in",
+			name:  "rules in one band keep the order they were enabled in",
 			rules: []Rule{selfContained, oneThing},
+			want: preamble + medBand +
+				"\n### Self contained\n\nA suite must produce the same verdict anywhere.\n" +
+				"\n### Tests one thing\n\nA test must have one reason to fail.\n",
+		},
+		{
+			name:  "the hardest band leads however the rules were ordered",
+			rules: []Rule{oneThing, fewArguments, oneJob},
 			want: preamble +
-				"\n## Self contained\n\nA suite must produce the same verdict anywhere.\n" +
-				"\n## Tests one thing\n\nA test must have one reason to fail.\n",
+				severeBand + "\n### One job\n\nA file has one job.\n" +
+				highBand + "\n### Few arguments\n\nA signature tells the whole story.\n" +
+				medBand + "\n### Tests one thing\n\nA test must have one reason to fail.\n",
+		},
+		{
+			name:  "a band no rule declared is left out rather than printed empty",
+			rules: []Rule{oneJob},
+			want:  preamble + severeBand + "\n### One job\n\nA file has one job.\n",
+		},
+		{
+			name:  "a rule that declared no priority still reaches the reader",
+			rules: []Rule{{Name: "undeclared", Prompt: "Something worth writing down."}},
+			want:  preamble + medBand + "\n### Undeclared\n\nSomething worth writing down.\n",
 		},
 		{
 			name:  "no rules leaves the document its preamble and nothing to follow",

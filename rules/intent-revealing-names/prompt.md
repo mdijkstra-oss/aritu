@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: function
+priority: med
 ---
 
 A name carries the intent of what it names; the reader should never have to decode it.

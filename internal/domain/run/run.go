@@ -252,7 +252,7 @@ func judge(ctx context.Context, ask service.Ask, leaves *leafCache, target lint.
 func reportFor(ctx context.Context, ask service.Ask, leaves *leafCache, target lint.Options) (lint.Report, error) {
 	units, err := unitsFor(ctx, ask, leaves, target)
 	if err != nil {
-		return lint.Report{Rule: target.Rule.Name, File: target.File, Votes: target.Votes}, err
+		return lint.ReportFor(target), err
 	}
 	return lint.Judge(ctx, ask, target, units)
 }
@@ -334,10 +334,28 @@ func writeResult(b *strings.Builder, result Result, colour bool) error {
 	if err := lint.Format(&rendered, result.Report, colour); err != nil {
 		return err
 	}
-	fmt.Fprintf(b, "  %s  %s\n", result.Report.Rule, selftest.FormatDuration(result.Duration))
+	fmt.Fprintf(b, "  %s%s  %s\n", result.Report.Rule, banner(result), selftest.FormatDuration(result.Duration))
 	b.WriteString(indent(bodyOf(rendered.String()), "  "))
 	b.WriteString("\n\n")
 	return nil
+}
+
+// A clean target has nothing to triage, so stamping every passing rule with a
+// severity would bury the handful that need one under a column of noise.
+func banner(result Result) string {
+	if !hasFallen(result) {
+		return ""
+	}
+	if result.Report.Priority == "" {
+		return ""
+	}
+	return "  " + result.Report.Priority
+}
+
+// hasFallen reads the report rather than the Result's error, because the report
+// is what gets rendered: a target carrying a could-not-run has one either way.
+func hasFallen(result Result) bool {
+	return result.Report.Error != "" || lint.ExitFor(result.Report) != lint.ExitPass
 }
 
 // bodyOf drops the single-report header, which names the rule and the file that

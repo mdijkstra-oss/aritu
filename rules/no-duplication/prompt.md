@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: file
+priority: severe
 ---
 
 Each piece of logic exists exactly once.

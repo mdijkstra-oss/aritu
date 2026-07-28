@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: file
+priority: severe
 ---
 
 A file has one job. Everything in it — types, helpers, constants — exists to serve that job.

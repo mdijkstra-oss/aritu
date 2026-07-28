@@ -35,6 +35,7 @@ type SourceFile = prompts.File
 // fell short.
 type Report struct {
 	Rule     string              `json:"rule"`
+	Priority string              `json:"priority,omitempty"`
 	File     string              `json:"file"`
 	Votes    int                 `json:"votes"`
 	Verdicts map[string]int      `json:"verdicts"`
@@ -62,12 +63,23 @@ const (
 // the file holds.
 const NamesSchema = `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"],"additionalProperties":false}`
 
+// ReportFor fills the header before anything is judged, because a target that
+// fails on its first model call still has to print one.
+func ReportFor(opts Options) Report {
+	return Report{
+		Rule:     opts.Rule.Name,
+		Priority: opts.Rule.Priority.String(),
+		File:     opts.File,
+		Votes:    opts.Votes,
+	}
+}
+
 // Apply votes on one file against one rule. Everything the rule reads is read
 // before anything is asked, so a target the rule cannot see costs no model call.
-// The returned Report carries Rule, File and Votes even when the error is
-// non-nil, so the caller can always emit output before exiting.
+// The returned Report carries its header even when the error is non-nil, so the
+// caller can always emit output before exiting.
 func Apply(ctx context.Context, ask service.Ask, opts Options) (Report, error) {
-	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
+	report := ReportFor(opts)
 	if opts.Votes < 1 {
 		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
 	}
@@ -115,11 +127,11 @@ func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit 
 	}
 }
 
-// Judge votes on units already enumerated. The returned Report carries Rule, File
-// and Votes even when the error is non-nil, so the caller can always emit output
+// Judge votes on units already enumerated. The returned Report carries its
+// header even when the error is non-nil, so the caller can always emit output
 // before exiting.
 func Judge(ctx context.Context, ask service.Ask, opts Options, units []Unit) (Report, error) {
-	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
+	report := ReportFor(opts)
 	if opts.Votes < 1 {
 		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
 	}
@@ -138,7 +150,7 @@ func leavesFor(ctx context.Context, ask service.Ask, opts Options) ([]string, er
 }
 
 func voteOn(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (Report, error) {
-	report := Report{Rule: opts.Rule.Name, File: opts.File, Votes: opts.Votes}
+	report := ReportFor(opts)
 
 	judge := func(ctx context.Context, _ int) (round, error) {
 		return askVerdicts(ctx, ask, opts, files, units)

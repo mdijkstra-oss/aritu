@@ -1,6 +1,7 @@
 ---
 targets: [code]
 granularity: file
+priority: high
 ---
 
 A known shape deserves a type; an untyped map hides what the code actually depends on.

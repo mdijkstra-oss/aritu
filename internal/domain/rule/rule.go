@@ -21,6 +21,7 @@ type Rule struct {
 	Targets       []string
 	IncludeSource bool
 	Granularity   Granularity
+	Priority      Priority
 }
 
 // Expectation is the pass/fail outcome a fixture directory name asserts.
@@ -30,6 +31,10 @@ type Expectation int
 // refinement of the one above, so the number of verdicts a file yields never
 // decreases as the level gets finer.
 type Granularity int
+
+// Priority is what a violation costs. The scale has no level below med: a
+// property not worth fixing is not worth a rule.
+type Priority int
 
 // Fixture is one scenario directory exercising a rule. File is the file its
 // expectation applies to.
@@ -43,6 +48,7 @@ type Fixture struct {
 type Prompt struct {
 	IncludeSource bool
 	Granularity   Granularity
+	Priority      Priority
 	Targets       []string
 	Body          string
 }
@@ -61,6 +67,19 @@ const (
 	// GranularityTestCase judges each independently nameable leaf: one case of a
 	// test, or the test itself when it declares no cases.
 	GranularityTestCase
+)
+
+const (
+	// PriorityUndeclared is a Rule that never came from a prompt file. It bands
+	// as PriorityMed.
+	PriorityUndeclared Priority = iota
+	// PriorityMed is fixable where it stands: a rename, a move, a deletion.
+	PriorityMed
+	// PriorityHigh is in a shape callers depend on, so the fix reaches past the
+	// declaration carrying it.
+	PriorityHigh
+	// PrioritySevere relocates the code around it, taking nested findings with it.
+	PrioritySevere
 )
 
 // Load reads <rulesDir>/<name>/prompt.md. The kinds of file a rule may target are
@@ -83,6 +102,7 @@ func Load(rulesDir, name string, knownTargets []string) (Rule, error) {
 		Targets:       prompt.Targets,
 		IncludeSource: prompt.IncludeSource,
 		Granularity:   prompt.Granularity,
+		Priority:      prompt.Priority,
 	}, nil
 }
 
@@ -148,10 +168,11 @@ func LoadFixtures(r Rule) ([]Fixture, error) {
 // or targets key is an error: defaulting either silently would change which files
 // reach the model, or what it is asked about them, without anyone noticing.
 //
-// include_source defaults to false, because false is what a rule needs unless it
-// is about tests: sending the implementation is only meaningful where there is a
-// file under test to find, and most rules judge a file on its own terms. The key
-// is written out only where a rule wants the pairing.
+// include_source and priority default instead, because neither changes what is
+// judged. include_source is false unless a rule is about tests: sending the
+// implementation is only meaningful where there is a file under test to find,
+// and most rules judge a file on its own terms. priority is med, the floor of
+// the scale. Both keys are written out only where a rule departs from that.
 func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	lines := strings.Split(raw, "\n")
 	if len(lines) == 0 || !isFrontmatterDelimiter(lines[0]) {
@@ -173,12 +194,17 @@ func ParsePrompt(raw string, knownTargets []string) (Prompt, error) {
 	if err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
 	}
+	priority, err := priorityOr(front.Priority)
+	if err != nil {
+		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
+	}
 	if err := checkTargetsAreKnown(front.Targets, knownTargets); err != nil {
 		return Prompt{}, fmt.Errorf("prompt.md: %w", err)
 	}
 	return Prompt{
 		IncludeSource: front.IncludeSource,
 		Granularity:   granularity,
+		Priority:      priority,
 		Targets:       front.Targets,
 		Body:          joinAfterLeadingBlanks(lines[closing+1:]),
 	}, nil
@@ -191,6 +217,14 @@ func ParseGranularity(name string) (Granularity, error) {
 		return 0, fmt.Errorf("granularity %q: must be file, function or test_case", name)
 	}
 	return granularity, nil
+}
+
+func ParsePriority(name string) (Priority, error) {
+	priority, isKnown := priorityNames[name]
+	if !isKnown {
+		return 0, fmt.Errorf("priority %q: must be med, high or severe", name)
+	}
+	return priority, nil
 }
 
 // checkTargetsAreKnown rejects a rule that is about no kind of file, or about one
@@ -226,9 +260,9 @@ func ParseExpectation(dirName string) (Expectation, error) {
 // beside the test are both plausible layouts, and no reading of the path alone
 // decides between them.
 //
-// The failure names every path it looked at. Four of seven rules need the source,
-// and a rule that skips a file is only useful if the reader can see where aritu
-// searched and add the file — or the layout — that was missing.
+// The failure names every path it looked at. A rule that skips a file is only
+// useful if the reader can see where aritu searched and add the file — or the
+// layout — that was missing.
 func FindSource(testPath string) (string, error) {
 	candidates := testpath.SourceCandidates(testPath)
 	if len(candidates) == 0 {
@@ -269,6 +303,30 @@ func (g Granularity) String() string {
 	}
 }
 
+// Band is the level a rule sorts and reports under. An undeclared priority
+// resolves to the same floor an omitted key parses to, so a Rule built as a
+// literal cannot drop out of a document meant to list every rule.
+func (p Priority) Band() Priority {
+	if p == PriorityUndeclared {
+		return PriorityMed
+	}
+	return p
+}
+
+// String renders a priority as it is written in frontmatter.
+func (p Priority) String() string {
+	switch p.Band() {
+	case PriorityMed:
+		return "med"
+	case PriorityHigh:
+		return "high"
+	case PrioritySevere:
+		return "severe"
+	default:
+		panic(fmt.Sprintf("unknown priority: %d", int(p)))
+	}
+}
+
 const (
 	promptFileName  = "prompt.md"
 	fixturesDirName = "fixtures"
@@ -284,6 +342,22 @@ var granularityNames = map[string]Granularity{
 	"file":      GranularityFile,
 	"function":  GranularityFunction,
 	"test_case": GranularityTestCase,
+}
+
+var priorityNames = map[string]Priority{
+	"med":    PriorityMed,
+	"high":   PriorityHigh,
+	"severe": PrioritySevere,
+}
+
+// Unlike granularity and targets, this key changes nothing about what reaches
+// the model, so omitting it can default rather than fail: the rule judges what
+// it always would and only sorts last.
+func priorityOr(declared *string) (Priority, error) {
+	if declared == nil {
+		return PriorityMed, nil
+	}
+	return ParsePriority(*declared)
 }
 
 func loadFixture(fixturesDir, name string) (Fixture, error) {
@@ -339,6 +413,7 @@ func isSourceFile(name string) bool {
 type frontmatter struct {
 	IncludeSource bool     `yaml:"include_source"`
 	Granularity   *string  `yaml:"granularity"`
+	Priority      *string  `yaml:"priority"`
 	Targets       []string `yaml:"targets"`
 }
 

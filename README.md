@@ -87,7 +87,7 @@ Omit `--rule` and every rule in the rules directory runs; repeat it to pick a fe
 
 ```
 internal/parser/parser.go
-  intent-revealing-names
+  intent-revealing-names  med
     ✓ parseConfig
     ! splitHostPort (1 of 2)
       one run read the name as carrying its intent and one did not
@@ -103,6 +103,11 @@ internal/parser/parser.go
 that it does not, and `!` an exact tie, which fails: half the votes is not a
 majority. The count appears whenever the vote was not unanimous — the mark
 carries the decision, the count how close it was.
+
+A rule that fell short carries its [`priority`](#priority) beside its name, so a
+sweep can be read top-down for what to fix first. A rule that passed carries
+nothing: a clean target has nothing to triage, and a severity against every
+passing rule would bury the handful that need one.
 
 Each block is printed as it finishes rather than at the end, so a sweep of any
 size shows its verdicts as they land. They still print in reading order: a file
@@ -180,24 +185,35 @@ aritu rulebook > AGENTS.md
 The following rules must be abided by. Read them before writing anything they are
 about, and check what you wrote against them before calling it done.
 
-## Intent revealing names
+They are grouped by what a violation costs. ...
 
-A name carries the intent of what it names; the reader should never have to
-decode it. ...
+## Severe
+
+Fix these before anything below them. ...
+
+### No multi job files
+
+A file has one job. Everything in it — types, helpers, constants — exists to
+serve that job. ...
 ```
 
-One heading per rule and the whole of that rule under it, in the order the rules
-were enabled. It is the selection `apply` uses, so a rule you have not enabled is
-not preached either, and `--rule` narrows the document the same way it narrows a
-sweep.
+One heading per rule and the whole of that rule under it. It is the selection
+`apply` uses, so a rule you have not enabled is not preached either, and `--rule`
+narrows the document the same way it narrows a sweep.
+
+**The rules are banded by [`priority`](#priority)**, hardest first, and within a
+band they keep the order they were enabled in. Banding is the one thing a flat
+list cannot say: which of two rules to satisfy first when a file breaks both. A
+band no enabled rule declared is left out rather than printed empty.
 
 **The heading is read off the directory name**, so a rule has one name and not two:
-`my-pretty-rule` becomes `## My pretty rule`. Any parking prefix comes off first —
+`my-pretty-rule` becomes `### My pretty rule`. Any parking prefix comes off first —
 whether a rule is currently enforced says nothing about what it asks for.
 
-**It is the same block the model is judged against.** `rule.Section` renders it
+**It is the same block the model is judged against.** `rule.SectionAt` renders it
 once and both readers get that rendering: the rulebook stacks the sections into a
-document, and the verdict prompt frames one of them for the model. There is no
+document under their band headings, and the verdict prompt frames one of them for
+the model. Only the heading depth differs between the two. There is no
 second, friendlier statement of a rule kept beside the real one — a summary and a
 criterion drift apart the moment either is edited, and the drift is invisible
 because nothing compares them. One text, read by the model that judges and by the
@@ -349,6 +365,7 @@ nothing about tests, which is what makes a rule about anything else possible.
 ---
 targets: [code]
 granularity: function
+priority: med
 ---
 A name carries the intent of what it names; the reader should never have to
 decode it...
@@ -372,6 +389,13 @@ judges, and nothing would report it. A
 nothing, and exit `0`. So an unknown kind fails when the rule is loaded, naming the
 ones there are, before a single model call — and so does an empty list, which is a
 rule that could never run.
+
+`priority` defaults instead, to `med`. It changes nothing about which files reach
+the model or what it is asked about them — only how the finding is reported and
+where the rule sits in the rulebook — so a rule that omits it judges exactly what
+it always would and simply sorts last. An unknown *value* is still an error: the
+scale is closed, and a typo that silently became `med` would quietly demote a rule
+somebody meant to raise.
 
 ### Grouping properties into rules
 
@@ -416,6 +440,28 @@ that exists.
 When nothing exists the file is skipped and **reported**, naming every path aritu
 looked at, rather than silently judged on partial context. If a real layout is
 missing from the table it is a row to add, not a knob to expose.
+
+### Priority
+
+`priority` declares what a violation costs. It answers one question — of the
+things this file got wrong, which do I fix first — and the scale is built around
+the fact that the answer is usually structural.
+
+| level | what it means |
+|---|---|
+| **`severe`** | the fix relocates the code around it, and findings nested inside it often go with it |
+| **`high`** | the violation is in a shape callers depend on, so the fix reaches past the declaration carrying it |
+| **`med`** | local enough to fix where it stands: a rename, a move, a deletion |
+
+**There is no `low`.** A property not worth fixing is not worth a rule, and a
+band nobody acts on turns the whole scale into decoration. `med` is the floor,
+which is also why it is what an omitted key parses to.
+
+Priority does not change what is judged — the same files reach the model and it
+is asked the same question. It changes what comes back: a rule that fell short
+prints its level beside its name, and [`rulebook`](#the-rulebook) groups by it.
+Fixing a `severe` first is not bookkeeping — its fix moves the code the lower
+bands are about, so findings under it are often answered before they are read.
 
 ### Granularity
 
