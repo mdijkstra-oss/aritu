@@ -247,7 +247,7 @@ func debugging(w io.Writer) service.Ask {
 // every key the schema requires, so the fabricated pass flows through the same
 // checks a real answer would.
 func debugReply(req service.Request) (json.RawMessage, error) {
-	if string(req.Schema) == lint.NamesSchema {
+	if isSplitterCall(req) {
 		return json.Marshal(map[string][]string{"names": {"DebugUnitOne", "DebugUnitTwo"}})
 	}
 	var schema struct {
@@ -271,10 +271,14 @@ type debugVerdict struct {
 	Reason    string `json:"reason"`
 }
 
-// callNameFor tells the two calls apart by the schema each carries, which is the
-// only thing about a request that says what it is for.
+// isSplitterCall tells the two calls apart by the schema each carries, which is
+// the only thing about a request that says what it is for.
+func isSplitterCall(req service.Request) bool {
+	return string(req.Schema) == lint.NamesSchema
+}
+
 func callNameFor(req service.Request) string {
-	if string(req.Schema) == lint.NamesSchema {
+	if isSplitterCall(req) {
 		return "splitter"
 	}
 	return "linter"
@@ -622,8 +626,8 @@ func ruleNamesFor(cli *CLI) ([]string, error) {
 
 // attempts is how many turns one call gets before it is reported as a
 // could-not-run. A model that answers outside the schema it was handed is the one
-// failure that a fresh turn usually fixes, and at seven rules over a corpus even a
-// small per-call rate makes every sweep report an error it did not earn.
+// failure a fresh turn usually fixes, and a sweep makes enough calls that even a
+// small per-call rate would have it report an error it did not earn.
 const attempts = 3
 
 // askFor resolves the endpoint and its credential before anything is asked, so a
