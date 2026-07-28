@@ -30,8 +30,9 @@ type Unit = prompts.Unit
 type SourceFile = prompts.File
 
 // Report is the tool's output. Verdicts maps each judged unit to how many of
-// Votes runs judged it to satisfy the rule; only a count equal to Votes passes.
-// Reasons carries one explanation per dissenting run, for units that fell short.
+// Votes runs judged it to satisfy the rule; a strict majority passes and a tie
+// fails. Reasons carries one explanation per dissenting run, for units that
+// fell short.
 type Report struct {
 	Rule     string              `json:"rule"`
 	File     string              `json:"file"`
@@ -154,10 +155,12 @@ func voteOn(ctx context.Context, ask service.Ask, opts Options, files []SourceFi
 
 // ExitFor derives the exit status of a completed report.
 func ExitFor(r Report) Exit {
-	if vote.IsUnanimous(r.Verdicts, r.Votes) {
-		return ExitPass
+	for _, count := range r.Verdicts {
+		if OutcomeFor(count, r.Votes) != OutcomePass {
+			return ExitFail
+		}
 	}
-	return ExitFail
+	return ExitPass
 }
 
 // BuildNamesPrompt asks the model to list a file's units of one rule's kind. It

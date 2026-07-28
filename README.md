@@ -96,9 +96,10 @@ internal/parser/parser_test.go
   2 passed  ·  2 failed  ·  1 split  ·  1 file, 2 rules, 2 votes  ·  4.1s
 ```
 
-`✓` is unanimous agreement that the unit satisfies the rule, `✗` unanimous
-agreement that it does not, and `!` a split — the only outcome where the count is
-shown, because that is the case where the number says something the mark cannot.
+`✓` is a majority judging the unit to satisfy the rule, `✗` a majority judging
+that it does not, and `!` an exact tie, which fails: half the votes is not a
+majority. The count appears whenever the vote was not unanimous — the mark
+carries the decision, the count how close it was.
 
 Each block is printed as it finishes rather than at the end, so a sweep of any
 size shows its verdicts as they land. They still print in reading order: a file
@@ -137,14 +138,14 @@ rule nearly working; `0` of `4` on a test that should pass is a rule that is
 broken. Both fail, and the number is what tells them apart while you tune.
 
 `reasons` carries one sentence per dissenting run, for units that fell short. A
-unanimous pass has nothing to explain, so it is omitted.
+pass has nothing to explain, so it is omitted.
 
 ### Exit codes
 
 | code | meaning |
 |---|---|
-| `0` | every unit of every rule over every file unanimously satisfies its rule |
-| `1` | one or more do not, whether the votes were unanimously against or split |
+| `0` | every unit of every rule over every file satisfies its rule by a majority of votes |
+| `1` | one or more do not, whether the votes were unanimously against or tied |
 | `2` | one or more targets could not be run, which outranks `1` |
 
 `2` outranking `1` matters: a run where one file was unreadable and another
@@ -565,7 +566,7 @@ which costs nothing to know and cannot be disagreed with.
 | `--config` | search upward | config file to use instead of `aritu.yml` discovery |
 | `--model` | `sonnet` | model name sent to the endpoint |
 | `--output` | `pretty` | `pretty` for reading, `json` for parsing |
-| `--votes` | `1` | rounds that must all agree before a unit passes |
+| `--votes` | `1` | rounds run per unit; a strict majority must agree it passes |
 | `--jobs` | `5` | model calls allowed in flight at once |
 | `--effort` | — | reasoning effort; empty leaves the endpoint default |
 | `--rules` | `./rules` | directory holding one subdirectory per rule |

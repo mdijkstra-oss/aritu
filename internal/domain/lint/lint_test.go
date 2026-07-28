@@ -109,12 +109,21 @@ func TestApply(t *testing.T) {
 			wantExit:     ExitPass,
 		},
 		{
-			name:         "split vote fails",
+			name:         "a lone dissent passes",
 			rule:         testOnly,
 			votes:        4,
 			names:        ok(bothNames),
 			verdicts:     []cannedReply{ok(bothSatisfy), ok(bothSatisfy), ok(bothSatisfy), ok(portFails)},
 			wantVerdicts: map[string]int{"TestParsesHost": 4, "TestRejectsPort": 3},
+			wantExit:     ExitPass,
+		},
+		{
+			name:         "a tie fails",
+			rule:         testOnly,
+			votes:        4,
+			names:        ok(bothNames),
+			verdicts:     []cannedReply{ok(bothSatisfy), ok(bothSatisfy), ok(portFails), ok(portFails)},
+			wantVerdicts: map[string]int{"TestParsesHost": 4, "TestRejectsPort": 2},
 			wantExit:     ExitFail,
 		},
 		{
@@ -387,8 +396,13 @@ func TestExitFor(t *testing.T) {
 			want:   ExitPass,
 		},
 		{
-			name:   "one vote short fails",
+			name:   "a majority passes",
 			report: Report{Votes: 4, Verdicts: map[string]int{"TestA": 4, "TestB": 3}},
+			want:   ExitPass,
+		},
+		{
+			name:   "a tie fails",
+			report: Report{Votes: 4, Verdicts: map[string]int{"TestA": 4, "TestB": 2}},
 			want:   ExitFail,
 		},
 		{

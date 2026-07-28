@@ -14,9 +14,9 @@ import (
 // per unit says nothing the count does not, and on a corpus of any size those
 // rows push the failures, the reason anyone is reading, off the screen.
 //
-// A count appears only on a split vote. Unanimous agreement either way is what a
-// mark already says, whereas a split is the one outcome where the number carries
-// information a mark cannot — it is how close the prompt is, not a third verdict.
+// A count appears whenever the vote was not unanimous. The mark carries the
+// decision; the count is how close it was, which is what a prompt being tuned
+// needs to see.
 func Format(w io.Writer, r Report, colour bool) error {
 	p := paletteFor(colour)
 	var b strings.Builder
@@ -47,24 +47,24 @@ func Format(w io.Writer, r Report, colour bool) error {
 type Outcome int
 
 const (
-	// OutcomePass is unanimous agreement that the unit satisfies the rule.
+	// OutcomePass is a majority judging the unit to satisfy the rule.
 	OutcomePass Outcome = iota + 1
-	// OutcomeSplit is any count between the poles: a failure, and the signal that
-	// the prompt is nearly working.
+	// OutcomeSplit is an exact tie, which fails: half the votes is not a majority.
 	OutcomeSplit
-	// OutcomeFail is unanimous agreement that the unit does not satisfy the rule.
+	// OutcomeFail is a majority judging the unit to fall short.
 	OutcomeFail
 )
 
-// OutcomeFor reads a unit's count against the votes it was given.
+// OutcomeFor reads a unit's count against the votes it was given. A strict
+// majority carries the unit; a tie fails it.
 func OutcomeFor(count, votes int) Outcome {
 	switch {
-	case count >= votes:
+	case count*2 > votes:
 		return OutcomePass
-	case count == 0:
-		return OutcomeFail
-	default:
+	case count*2 == votes:
 		return OutcomeSplit
+	default:
+		return OutcomeFail
 	}
 }
 
@@ -140,7 +140,7 @@ func filterFallen(cases []reportCase, votes int) []reportCase {
 func writeUnit(b *strings.Builder, p palette, indent, unit, label string, count int, r Report) {
 	outcome := OutcomeFor(count, r.Votes)
 	fmt.Fprintf(b, "%s%s%s%s %s", indent, colourOf(p, outcome), markOf(outcome), p.reset, label)
-	if outcome == OutcomeSplit {
+	if count > 0 && count < r.Votes {
 		fmt.Fprintf(b, " %s(%d of %d)%s", p.dim, count, r.Votes, p.reset)
 	}
 	b.WriteString("\n")
@@ -154,7 +154,7 @@ func writeUnit(b *strings.Builder, p palette, indent, unit, label string, count 
 // matching on the label alone would attach one function's reason to the other's
 // case, picked at random by map iteration order.
 func reasonsFor(r Report, unit string, count int) []string {
-	if count >= r.Votes {
+	if OutcomeFor(count, r.Votes) == OutcomePass {
 		return nil
 	}
 	return r.Reasons[unit]

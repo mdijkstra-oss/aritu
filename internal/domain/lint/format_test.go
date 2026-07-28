@@ -16,8 +16,10 @@ func TestOutcomeFor(t *testing.T) {
 		{name: "every vote agreed", count: 4, votes: 4, want: OutcomePass},
 		{name: "a single vote agreeing is unanimous when one was asked", count: 1, votes: 1, want: OutcomePass},
 		{name: "no vote agreed", count: 0, votes: 4, want: OutcomeFail},
-		{name: "one vote short of the total is split", count: 3, votes: 4, want: OutcomeSplit},
-		{name: "one vote above zero is split", count: 1, votes: 4, want: OutcomeSplit},
+		{name: "a majority carries the unit", count: 3, votes: 4, want: OutcomePass},
+		{name: "a minority falls short", count: 1, votes: 4, want: OutcomeFail},
+		{name: "an exact tie is split", count: 2, votes: 4, want: OutcomeSplit},
+		{name: "two of three is a majority", count: 2, votes: 3, want: OutcomePass},
 	}
 
 	for _, tc := range tests {

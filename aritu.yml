@@ -1,8 +1,8 @@
 service:
-  endpoint: http://localhost:8080/claude-cli
-  model: claude-sonnet-5
+  endpoint: http://localhost:8080/gemini
+  model: gemini-3.6-flash
   effort: low
   # auth_token_var: ARITU_TOKEN   # omit for an endpoint that ignores auth
 
-votes: 1
+votes: 3
 jobs: 10

@@ -37,7 +37,7 @@ type CLI struct {
 	Rule     []string      `help:"Rule to run; repeat for several. Every rule in the rules directory when omitted." placeholder:"NAME" sep:"none"`
 	Model    string        `help:"Model name sent to the service endpoint." default:"${model}"`
 	Effort   string        `help:"Reasoning effort: low, medium, high, xhigh or max. Empty leaves the endpoint default." default:"${effort}"`
-	Votes    int           `help:"Rounds that must all agree before a unit passes." default:"${votes}"`
+	Votes    int           `help:"Rounds run per unit; a strict majority must agree it passes." default:"${votes}"`
 	Jobs     int           `help:"Model calls allowed in flight at once." default:"${jobs}"`
 	Output   string        `help:"How to render the report: pretty or json." default:"${output}"`
 	Rules    string        `help:"Directory holding one subdirectory per rule." default:"${rules}" placeholder:"DIR"`
