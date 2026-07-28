@@ -261,7 +261,38 @@ func askNames(ctx context.Context, ask service.Ask, opts Options, file SourceFil
 	return uniqueNames(reply.Names), nil
 }
 
+// maxUnitsPerCall bounds how many units one verdict call carries. The schema
+// names a property per unit, and the endpoint rejects the request outright once
+// that object grows too large: a file of seventy short-keyed units was accepted
+// where eighty were not. Keys run to maxKeyLength, so the ceiling is lower for a
+// file whose names are long, and the bound below is set well under the measured
+// edge rather than at it.
+//
+// Batching costs a call per batch and buys nothing else: keys are assigned
+// across the whole listing before it is cut up, so each unit answers under the
+// same property it would have had in one call.
+const maxUnitsPerCall = 50
+
 func askVerdicts(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
+	judged := round{
+		verdicts: make(map[string]bool, len(units)),
+		reasons:  make(map[string]string, len(units)),
+	}
+	for _, batch := range batchesOf(units, maxUnitsPerCall) {
+		answers, err := askBatch(ctx, ask, opts, files, batch)
+		if err != nil {
+			return round{}, err
+		}
+		for _, unit := range batch {
+			answer := answers[unit.Key]
+			judged.verdicts[unit.Name] = answer.Satisfies
+			judged.reasons[unit.Name] = answer.Reason
+		}
+	}
+	return judged, nil
+}
+
+func askBatch(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (map[string]verdictAnswer, error) {
 	raw, err := ask(ctx, service.Request{
 		Prompt: BuildVerdictPrompt(opts.Rule, files, units),
 		Model:  opts.Model,
@@ -269,27 +300,25 @@ func askVerdicts(ctx context.Context, ask service.Ask, opts Options, files []Sou
 		Schema: VerdictSchemaFor(units),
 	})
 	if err != nil {
-		return round{}, fmt.Errorf("judging %s against rule %s: %w", opts.File, opts.Rule.Name, err)
+		return nil, fmt.Errorf("judging %s against rule %s: %w", opts.File, opts.Rule.Name, err)
 	}
 
 	answers := map[string]verdictAnswer{}
 	if err := json.Unmarshal(raw, &answers); err != nil {
-		return round{}, fmt.Errorf("reading verdicts for %s: %w", opts.File, err)
+		return nil, fmt.Errorf("reading verdicts for %s: %w", opts.File, err)
 	}
 	if err := checkKeysMatch(units, answers, opts.File); err != nil {
-		return round{}, err
+		return nil, err
 	}
+	return answers, nil
+}
 
-	judged := round{
-		verdicts: make(map[string]bool, len(units)),
-		reasons:  make(map[string]string, len(units)),
+func batchesOf(units []Unit, size int) [][]Unit {
+	batches := make([][]Unit, 0, (len(units)+size-1)/size)
+	for start := 0; start < len(units); start += size {
+		batches = append(batches, units[start:min(start+size, len(units))])
 	}
-	for _, unit := range units {
-		answer := answers[unit.Key]
-		judged.verdicts[unit.Name] = answer.Satisfies
-		judged.reasons[unit.Name] = answer.Reason
-	}
-	return judged, nil
+	return batches
 }
 
 func verdictsOf(rounds []round) []map[string]bool {

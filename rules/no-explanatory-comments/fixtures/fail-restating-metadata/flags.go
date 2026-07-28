@@ -2,7 +2,6 @@ package cli
 
 import "time"
 
-// Flags is the command line.
 type Flags struct {
 	// Output is how to render the report: text or json.
 	Output string `help:"How to render the report: text or json."`

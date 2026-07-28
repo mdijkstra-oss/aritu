@@ -349,8 +349,8 @@ var expectationPrefixes = map[string]Expectation{
 }
 
 var granularityNames = map[string]Granularity{
-	"file":      GranularityFile,
-	"function":  GranularityFunction,
+	"file":        GranularityFile,
+	"function":    GranularityFunction,
 	"test_case":   GranularityTestCase,
 	"comment":     GranularityComment,
 	"declaration": GranularityDeclaration,
