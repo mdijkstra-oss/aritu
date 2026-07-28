@@ -7,7 +7,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/matthijn/aritu/internal/domain/rule"
 	"github.com/matthijn/aritu/internal/lib/service"
@@ -57,11 +56,6 @@ const (
 	ExitFail  Exit = 1
 	ExitError Exit = 2
 )
-
-// NamesSchema constrains the test-name call. Its keys are fixed rather than
-// generated because the answer's shape never varies: one array, however many tests
-// the file holds.
-const NamesSchema = `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"],"additionalProperties":false}`
 
 // ReportFor fills the header before anything is judged, because a target that
 // fails on its first model call still has to print one.
@@ -403,139 +397,4 @@ func checkKeysMatch(units []Unit, answers map[string]verdictAnswer, file string)
 		return nil
 	}
 	return fmt.Errorf("verdicts for %s do not cover exactly the units listed: %s", file, strings.Join(problems, "; "))
-}
-
-// UnitsFor derives the key each enumerated identifier is answered under.
-func UnitsFor(names []string) []Unit {
-	units := make([]Unit, 0, len(names))
-	for at, name := range names {
-		units = append(units, Unit{Name: name, Key: keyFor(at, name)})
-	}
-	return units
-}
-
-// VerdictSchemaFor names every key the reply may carry. An object cannot repeat a
-// key, cannot omit a required one and cannot carry an extra one, so duplicated,
-// dropped and invented units stop being errors this package has to detect and
-// become schema violations the endpoint refuses to produce.
-func VerdictSchemaFor(units []Unit) json.RawMessage {
-	answers := make(map[string]schemaNode, len(units))
-	keys := make([]string, 0, len(units))
-	for _, unit := range units {
-		answers[unit.Key] = answerSchema()
-		keys = append(keys, unit.Key)
-	}
-	encoded, err := json.Marshal(closedObject(answers, keys))
-	if err != nil {
-		panic(fmt.Sprintf("the verdict schema failed to marshal, which its types make impossible: %v", err))
-	}
-	return encoded
-}
-
-// schemaNode is one node of a generated JSON Schema. AdditionalProperties is a
-// pointer because the keyword only means anything on an object: emitted beside a
-// string or a boolean the endpoint rejects the request outright, and a rejected
-// request is not retried — every call carrying the schema fails the same way, for
-// a reason that reads as the endpoint's rather than as ours.
-type schemaNode struct {
-	Type                 string                `json:"type"`
-	Properties           map[string]schemaNode `json:"properties,omitempty"`
-	Required             []string              `json:"required,omitempty"`
-	AdditionalProperties *bool                 `json:"additionalProperties,omitempty"`
-}
-
-// closedObject is an object that may carry no key beyond the ones named, which is
-// what turns a duplicated, dropped or invented unit into a reply the endpoint's
-// strict enforcement will not produce, rather than an error this package detects.
-func closedObject(properties map[string]schemaNode, required []string) schemaNode {
-	isClosed := false
-	return schemaNode{
-		Type:                 "object",
-		Properties:           properties,
-		Required:             required,
-		AdditionalProperties: &isClosed,
-	}
-}
-
-func answerSchema() schemaNode {
-	return closedObject(map[string]schemaNode{
-		"satisfies": {Type: "boolean"},
-		"reason":    {Type: "string"},
-	}, []string{"satisfies", "reason"})
-}
-
-// keyFor derives the property a unit answers under: its position in the listed
-// units, then a normalised form of the name a reader can recognise.
-//
-// Uniqueness rides entirely on the position, which is what lets the readable half
-// be cut to fit the API's ceiling. Cutting a readable key on its own is the wrong
-// answer twice over: the prefix that survives is neither unique — two files under
-// one long directory reduce to the same string — nor legible, and dropping a unit's
-// own property would hand it a neighbour's verdict with every count still looking
-// healthy. The tail is kept over the head because it is the half a reader
-// recognises: the file name, the case that failed.
-func keyFor(at int, name string) string {
-	prefix := fmt.Sprintf("u%02d", at+1)
-	readable := strings.Trim(lastChars(snakeCase(name), maxKeyLength-len(prefix)-1), "_")
-	if readable == "" {
-		return prefix
-	}
-	return prefix + "_" + readable
-}
-
-// maxKeyLength and the character set below are the API's, not ours: a schema
-// property key is rejected outright unless it matches ^[a-zA-Z0-9_.-]{1,64}$.
-// Colons, slashes and spaces are all out, which is why a unit's key cannot simply
-// be the identifier a reader sees.
-const maxKeyLength = 64
-
-func lastChars(text string, count int) string {
-	if len(text) <= count {
-		return text
-	}
-	return text[len(text)-count:]
-}
-
-// splitUnit separates the test from the case a leaf name carries. It takes the
-// last " (" rather than the first because the half in front of it is a namespace
-// path of arbitrary prose — a grouping block may be named "Parser (v2)" — while the
-// case is always the trailing parenthesis the enumeration appended.
-func splitUnit(name string) (function, caseName string, hasCase bool) {
-	open := strings.LastIndex(name, " (")
-	if open < 0 || !strings.HasSuffix(name, ")") {
-		return name, "", false
-	}
-	return name[:open], name[open+2 : len(name)-1], true
-}
-
-// snakeCase normalises a name for the key: anything outside the key's character
-// set collapses to a single underscore however much of it there was, and a word
-// break opens where a capital follows a lower-case letter or digit. Acronym-grade
-// word splitting is deliberately absent — the position prefix already guarantees
-// uniqueness, so the readable half only has to be recognisable.
-func snakeCase(text string) string {
-	var b strings.Builder
-	pendingSeparator := false
-	var previous rune
-	for _, r := range text {
-		if !isWordRune(r) {
-			pendingSeparator = true
-			continue
-		}
-		opensWord := unicode.IsUpper(r) && (unicode.IsLower(previous) || unicode.IsDigit(previous))
-		if b.Len() > 0 && (pendingSeparator || opensWord) {
-			b.WriteByte('_')
-		}
-		pendingSeparator = false
-		previous = r
-		b.WriteRune(unicode.ToLower(r))
-	}
-	return b.String()
-}
-
-// isWordRune is deliberately ASCII: a rune outside this set becomes a separator
-// rather than being lowercased into the key, which is what guarantees every key
-// matches the character set the API accepts.
-func isWordRune(r rune) bool {
-	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }

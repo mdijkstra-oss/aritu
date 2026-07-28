@@ -83,6 +83,18 @@ type reportCase struct {
 	Count int
 }
 
+// splitUnit separates the test from the case a leaf name carries. It takes the
+// last " (" rather than the first because the half in front of it is a namespace
+// path of arbitrary prose — a grouping block may be named "Parser (v2)" — while the
+// case is always the trailing parenthesis the enumeration appended.
+func splitUnit(name string) (function, caseName string, hasCase bool) {
+	open := strings.LastIndex(name, " (")
+	if open < 0 || !strings.HasSuffix(name, ")") {
+		return name, "", false
+	}
+	return name[:open], name[open+2 : len(name)-1], true
+}
+
 func groupsOf(verdicts map[string]int) []reportGroup {
 	byFunction := map[string]*reportGroup{}
 	for _, unit := range slices.Sorted(maps.Keys(verdicts)) {
