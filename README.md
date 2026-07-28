@@ -2,6 +2,8 @@
 
 A shield against tests that do not earn their keep.
 
+![Claude is an expert](assets/claude-is-an-expert.jpeg)
+
 aritu is an LLM linter for tests. You give it a rule and a test file; it asks a
 model whether each unit of that file satisfies the rule, several times over, and
 reports how many runs agreed. Run it in CI or from a pre-commit hook to stop tests
@@ -11,8 +13,8 @@ that assert nothing, prove nothing, or mock away the thing they claim to cover.
 afterwards, nothing disagrees, and nothing fails: whether the rule was followed
 comes down to whether the model was inclined to follow it, and the only account of
 that is a diff summarised by the same model that wrote it. aritu is that same
-standard made checkable — a verdict per unit with a reason, several runs that have
-to agree before anything passes, and a non-zero exit code out of a hook. Being told
+standard made checkable — a verdict per unit with a reason, a majority of runs
+that has to agree before anything passes, and a non-zero exit code out of a hook. Being told
 becomes being held to it.
 
 The same rules come back out as a document. `aritu rulebook` writes them out in
