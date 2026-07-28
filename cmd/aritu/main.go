@@ -17,7 +17,6 @@ import (
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
-// CLI is the whole command line.
 type CLI struct {
 	Config   string        `help:"Config file to use instead of searching upward for aritu.yml." placeholder:"PATH"`
 	Rule     []string      `help:"Rule to run; repeat for several. Every rule in the rules directory when omitted." placeholder:"NAME" sep:"none"`
@@ -33,20 +32,15 @@ type CLI struct {
 	Selftest SelftestCmd   `cmd:"" help:"Run every rule against its own fixtures."`
 	Rulebook RulebookCmd   `cmd:"" help:"Write the enabled rules as a document to follow before writing."`
 
-	// A kong resolver can only supply values for flags, so aritu.yml's target
-	// patterns and enabled rules cannot leave the parse through one.
 	Loaded config.Config `kong:"-"`
 }
 
-// ApplyCmd judges files against the rules that are about them.
 type ApplyCmd struct {
 	Patterns []string `arg:"" optional:"" name:"pattern" help:"File or glob to judge; repeat for several. Everything the enabled rules target when omitted."`
 }
 
-// SelftestCmd runs every named rule against its own fixtures.
 type SelftestCmd struct{}
 
-// RulebookCmd writes the enabled rules as one document.
 type RulebookCmd struct{}
 
 const description = `An LLM linter for tests.
@@ -76,9 +70,6 @@ var defaults = kong.Vars{
 	"timeout": "10m",
 }
 
-// kong resolves --config during the parse, so aritu.yml cannot be read before
-// the parser exists, and a kong resolver is the only seam that distinguishes a
-// value it supplied from a flag somebody typed.
 func (c *CLI) BeforeResolve(kctx *kong.Context) error {
 	path, isFound, err := configPathFor(flagValue(kctx, "config"))
 	if err != nil || !isFound {
@@ -93,10 +84,8 @@ func (c *CLI) BeforeResolve(kctx *kong.Context) error {
 	return nil
 }
 
-// Help is the long-form help kong appends to this command's usage.
 func (ApplyCmd) Help() string { return exitCodes }
 
-// Help is the long-form help kong appends to this command's usage.
 func (SelftestCmd) Help() string { return exitCodes }
 
 func main() {
@@ -104,34 +93,35 @@ func main() {
 }
 
 func execute(args []string, stdout, stderr io.Writer) lint.Exit {
+	out := streams{stdout: stdout, stderr: stderr}
 	var cli CLI
 	hasPrintedHelp := false
-	parser := newParser(&cli, stdout, stderr, func(int) { hasPrintedHelp = true })
+	noteHelpPrinted := func(int) { hasPrintedHelp = true }
+	parser := newParser(&cli, out, noteHelpPrinted)
 
 	kctx, err := parser.Parse(args)
 	if hasPrintedHelp {
 		return lint.ExitPass
 	}
 	if err != nil {
-		return reportUsage(parser, stderr, err)
+		return reportUsage(parser, out.stderr, err)
 	}
 	if err := validate(cli); err != nil {
-		fmt.Fprintf(stderr, "aritu: %v\n", err)
+		fmt.Fprintf(out.stderr, "aritu: %v\n", err)
 		return lint.ExitError
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cli.Timeout)
 	defer cancel()
-	return commandFor(kctx.Selected().Name)(ctx, &cli, stdout, stderr)
+	return commandFor(kctx.Selected().Name)(ctx, &cli, out)
 }
 
-func newParser(cli *CLI, stdout, stderr io.Writer, exit func(int)) *kong.Kong {
+func newParser(cli *CLI, out streams, interceptExit func(int)) *kong.Kong {
 	return kong.Must(cli,
 		kong.Name("aritu"),
 		kong.Description(description),
-		kong.Writers(stdout, stderr),
-		// kong's help flag ends the process on its own.
-		kong.Exit(exit),
+		kong.Writers(out.stdout, out.stderr),
+		kong.Exit(interceptExit),
 		defaults,
 	)
 }
@@ -165,21 +155,21 @@ func isKnownEffort(effort string) bool {
 	return effort == "" || slices.Contains(efforts, effort)
 }
 
-type command func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit
+type command func(ctx context.Context, cli *CLI, out streams) lint.Exit
 
-type judged func(ctx context.Context, cli *CLI, ask service.Ask, stdout, stderr io.Writer) lint.Exit
+type judged func(ctx context.Context, cli *CLI, ask service.Ask, out streams) lint.Exit
 
 func judging(body judged) command {
-	return func(ctx context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
+	return func(ctx context.Context, cli *CLI, out streams) lint.Exit {
 		if cli.Debug {
-			return body(ctx, cli, debugging(stderr), stdout, stderr)
+			return body(ctx, cli, debugging(out.stderr), out)
 		}
 		ask, err := askFor(cli)
 		if err != nil {
-			fmt.Fprintf(stderr, "aritu: %v\n", err)
+			fmt.Fprintf(out.stderr, "aritu: %v\n", err)
 			return lint.ExitError
 		}
-		return body(ctx, cli, ask, stdout, stderr)
+		return body(ctx, cli, ask, out)
 	}
 }
 

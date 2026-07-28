@@ -23,12 +23,16 @@ func configPathFor(explicit string) (path string, isFound bool, err error) {
 
 func resolverFor(loaded config.Config) kong.ResolverFunc {
 	return func(_ *kong.Context, _ *kong.Path, flag *kong.Flag) (any, error) {
-		value, isSet := loaded.Lookup(flag.Name)
-		if !isSet {
-			return nil, nil
-		}
-		return mappable(value), nil
+		return configuredValue(loaded, flag)
 	}
+}
+
+func configuredValue(loaded config.Config, flag *kong.Flag) (any, error) {
+	value, isSet := loaded.Lookup(flag.Name)
+	if !isSet {
+		return nil, nil
+	}
+	return mappable(value), nil
 }
 
 // kong's duration mapper switches on concrete types and time.Duration is not

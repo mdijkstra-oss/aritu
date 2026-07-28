@@ -9,9 +9,9 @@ import (
 	"github.com/matthijn/aritu/internal/domain/rule"
 )
 
-func runRulebook(_ context.Context, cli *CLI, stdout, stderr io.Writer) lint.Exit {
-	if err := writeRulebook(cli, stdout); err != nil {
-		fmt.Fprintf(stderr, "aritu rulebook: %v\n", err)
+func runRulebook(_ context.Context, cli *CLI, out streams) lint.Exit {
+	if err := writeRulebook(cli, out.stdout); err != nil {
+		fmt.Fprintf(out.stderr, "aritu rulebook: %v\n", err)
 		return lint.ExitError
 	}
 	return lint.ExitPass

@@ -34,21 +34,26 @@ func reporterFor(format string, w io.Writer, colour bool) reporter {
 }
 
 func prettyReporter(w io.Writer, colour bool) reporter {
-	stream := run.NewReporter(w, colour)
-	var first error
-	return reporter{
-		observe: func(result run.Result) {
-			if first == nil {
-				first = stream.Result(result)
-			}
-		},
-		finish: func(s sweep) error {
-			if first != nil {
-				return first
-			}
-			return stream.Summary(s.Results, s.Options, s.Elapsed)
-		},
+	stream := &prettyStream{out: run.NewReporter(w, colour)}
+	return reporter{observe: stream.observe, finish: stream.finish}
+}
+
+type prettyStream struct {
+	out   *run.Reporter
+	first error
+}
+
+func (p *prettyStream) observe(result run.Result) {
+	if p.first == nil {
+		p.first = p.out.Result(result)
 	}
+}
+
+func (p *prettyStream) finish(s sweep) error {
+	if p.first != nil {
+		return p.first
+	}
+	return p.out.Summary(s.Results, s.Options, s.Elapsed)
 }
 
 func silentReporter() reporter {
@@ -58,7 +63,6 @@ func silentReporter() reporter {
 	}
 }
 
-// Half a JSON document is not parseable.
 func jsonReporter(w io.Writer, _ bool) reporter {
 	return reporter{finish: func(s sweep) error { return writeSweepJSON(w, s) }}
 }

@@ -8,8 +8,6 @@ import (
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
-// A model answering outside the schema it was handed is the one failure a fresh
-// turn usually fixes.
 const attempts = 3
 
 func askFor(cli *CLI) (service.Ask, error) {

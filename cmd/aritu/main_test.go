@@ -522,7 +522,7 @@ func TestResolvedFlags(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(cmp.Or(tc.dir, neutral))
 			var cli CLI
-			parser := newParser(&cli, io.Discard, io.Discard, func(int) {})
+			parser := newParser(&cli, streams{stdout: io.Discard, stderr: io.Discard}, func(int) {})
 
 			_, err := parser.Parse(tc.args)
 
