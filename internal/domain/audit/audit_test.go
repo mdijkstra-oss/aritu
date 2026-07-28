@@ -1,4 +1,4 @@
-package run
+package audit
 
 import (
 	"bytes"
@@ -657,7 +657,7 @@ func TestFormat(t *testing.T) {
 			elapsed: 100 * time.Millisecond,
 			want: "empty_test.go\n" +
 				"  named-for-behavior  100ms\n" +
-				"    no test units found\n" +
+				"    no units to judge\n" +
 				"\n" +
 				"  0 passed  ·  1 file, 1 rule, 2 votes  ·  100ms\n",
 		},

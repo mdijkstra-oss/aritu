@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/matthijn/aritu/internal/domain/run"
+	"github.com/matthijn/aritu/internal/domain/audit"
 )
 
-var reporters = map[string]func(io.Writer, bool) run.Reporting{
-	"pretty": run.Pretty,
+var reporters = map[string]func(io.Writer, bool) audit.Reporting{
+	"pretty": audit.Pretty,
 	"json":   jsonReporting,
 }
 
-func reporterFor(format string, w io.Writer, colour bool) run.Reporting {
+func reporterFor(format string, w io.Writer, colour bool) audit.Reporting {
 	build, isKnown := reporters[format]
 	if !isKnown {
 		panic(fmt.Sprintf("output %q reached the reporter without being validated", format))
@@ -20,6 +20,6 @@ func reporterFor(format string, w io.Writer, colour bool) run.Reporting {
 	return build(w, colour)
 }
 
-func jsonReporting(w io.Writer, _ bool) run.Reporting {
-	return run.JSON(w)
+func jsonReporting(w io.Writer, _ bool) audit.Reporting {
+	return audit.JSON(w)
 }

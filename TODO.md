@@ -5,7 +5,7 @@
   disagree with itself between runs. A static parse per language would be
   cheaper and deterministic — the unit kinds are all syntax: declarations,
   functions, comments, test cases. The splitter prompts are the specification
-  to port, and the cache in `internal/domain/run/run.go` already keys on file
+  to port, and the cache in `internal/domain/audit/audit.go` already keys on file
   plus granularity, so a parser could fill the same seam. Prompts are the
   stopgap, not the destination.
 
