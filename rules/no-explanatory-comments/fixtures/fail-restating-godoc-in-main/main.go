@@ -30,7 +30,7 @@ const exitCodes = `Exit codes:
     0  every unit satisfied its rule
     1  one or more did not`
 
-// Help is the exit-code table.
+// Help returns the help text.
 func (ApplyCmd) Help() string { return exitCodes }
 
 func main() {

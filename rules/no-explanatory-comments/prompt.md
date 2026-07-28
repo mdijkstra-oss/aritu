@@ -26,11 +26,17 @@ These are not explanations, and are judged apart from the test above:
 
 - Delete code that has been commented out — example code inside a doc comment is
   documentation, not a leftover.
-- Allow the doc comment an ecosystem mandates on a symbol other code imports
-  (godoc, JSDoc, docstrings), even where it only gives the signature back. The
-  allowance is the published surface, not the export keyword: an entry-point
-  module publishes nothing, so a restating line there is judged like any
-  other. Judge whatever a doc comment says beyond the signature by the test
-  above. Length is never the fault: a paragraph of foreign fact stays where a
-  single restating line goes.
+- Hold the doc comment an ecosystem mandates (godoc, JSDoc, docstrings) to one
+  line, and judge every line past the first by the test above.
+- Fail a doc comment that hands the declaration back — `Config holds the
+  configuration`, `Load loads a config file`, `New returns a new Client`. A
+  restated name and type say nothing the declaration below has not, and the
+  mandate to write one is not a reason to write that one.
+- Fail a doc comment carrying what the name could carry — a unit, a direction,
+  which of two readings a number takes. A comment a rename would delete is a
+  report that the name is wrong, so rename.
+- Keep the line that fixes a contract a caller could otherwise break and no name
+  can hold: what the zero value means, whether it is safe to call concurrently,
+  which named errors come back and when, what the caller must not retain or
+  modify, what has to run before or after it, or a deprecation marker.
 - Allow legal headers, warnings about consequences, and TODO comments.

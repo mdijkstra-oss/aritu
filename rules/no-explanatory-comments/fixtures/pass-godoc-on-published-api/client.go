@@ -6,25 +6,21 @@ import (
 	"time"
 )
 
-// Client fetches exchange rates.
+// Client is safe for concurrent use by any number of callers.
 type Client struct {
 	http *http.Client
 	key  string
 }
 
-// New returns a Client that signs its requests with key.
+// New does not validate key; a bad one first surfaces on the next call out.
 func New(key string) *Client {
 	return &Client{http: &http.Client{Timeout: 10 * time.Second}, key: key}
 }
 
-// ErrThrottled reports that the endpoint refused the call for rate limiting.
+// ErrThrottled comes back when the endpoint refused the call for rate limiting.
 var ErrThrottled = errors.New("rate limited")
 
-// Rate returns the rate for the given currency pair.
-//
-// The upstream publishes one fixing per weekday at 16:00 CET and serves the
-// previous fixing until then, so a weekend call answers with Friday's.
-func (c *Client) Rate(base, quote string) (float64, error) {
+func (c *Client) QuotePerBase(base, quote string) (float64, error) {
 	req, err := http.NewRequest(http.MethodGet, "https://rates.example.com/v1/"+base+quote, nil)
 	if err != nil {
 		return 0, err
