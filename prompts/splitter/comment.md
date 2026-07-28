@@ -8,6 +8,8 @@ A comment belongs to the declaration it documents — the one directly beneath i
 - a comment inside a body                         ->  the name of the declaration it is inside
 - a comment belonging to no declaration           ->  (file), for a licence header, a comment above the package or the imports, or one stranded between declarations
 
+Attribution is by position and nothing else. A comment that names, discusses or quotes some other declaration still belongs to the one it sits on: read where it is, never what it is about. A comment mentioning `BeforeResolve` while sitting above `flagValue` is a unit of `flagValue`.
+
 Count a run of adjacent single-line comments as one unit: what matters is the comment a reader meets, not how many delimiters it took to write. A blank line, or any code between them, starts a new one.
 
 When several comments resolve to one name, keep the first as written and append #01, #02 and so on to the later ones, in the order they appear in the file.
