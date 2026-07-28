@@ -74,6 +74,33 @@ overlap the outer one wins and the inner one is re-judged rather than fixed.
 A split is a move, so it commits on its own before anything inside it is
 touched.
 
+## Placement
+
+Where a piece lands follows from what it is, so settle that before choosing a
+directory — left beside whatever called it, a split moves a boundary and leaves
+the dependency where it was.
+
+Ask what each piece does, not who calls it: being reached through one entry
+point today is a fact about the caller. Then read what it takes in. A parameter
+carrying the caller's own shape — a flags struct, a request, a session — is
+what made the piece look local, and it is almost always incidental, since what
+it uses is a few values rather than the shape they arrived in. Give it the type
+it actually needs and it stops belonging to its caller.
+
+Look for a home the repository already has before inventing one. Most
+repositories separate what is about the subject from what is about nothing in
+particular, and a piece belongs in whichever describes it — a generic helper
+does not become domain code by being written for a domain. Where nothing fits,
+a new location is the right answer, but name it in the report: a new home is a
+claim about the repository's shape rather than a file move, and that is the
+user's call.
+
+The imports point one way wherever it lands: the generic half never learns the
+domain, the domain never learns the delivery mechanism, and the entry point is
+the only place allowed to know all three. A placement that inverts one of those
+is not the thing to fix — the parameter forcing it is, and it goes first.
+Crossing a package boundary is still a move, and commits on its own.
+
 ## Closing
 
 The commits a run makes as it goes are working state rather than history:
