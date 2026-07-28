@@ -13,6 +13,7 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/matthijn/aritu/internal/domain/config"
+	"github.com/matthijn/aritu/internal/domain/debug"
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/lib/service"
 )
@@ -162,7 +163,7 @@ type judged func(ctx context.Context, cli *CLI, ask service.Ask, out streams) li
 func judging(body judged) command {
 	return func(ctx context.Context, cli *CLI, out streams) lint.Exit {
 		if cli.Debug {
-			return body(ctx, cli, debugging(out.stderr), out)
+			return body(ctx, cli, debug.New(out.stderr), out)
 		}
 		ask, err := askFor(cli)
 		if err != nil {

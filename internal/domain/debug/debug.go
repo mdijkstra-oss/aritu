@@ -1,4 +1,4 @@
-package main
+package debug
 
 import (
 	"context"
@@ -11,30 +11,32 @@ import (
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
-func debugging(w io.Writer) service.Ask {
-	printer := &debugPrinter{w: w}
+// New answers every call with a fabricated reply, printing the prompt it was
+// handed instead of sending it.
+func New(w io.Writer) service.Ask {
+	printer := &printer{w: w}
 	return printer.ask
 }
 
-type debugPrinter struct {
+type printer struct {
 	mu sync.Mutex
 	w  io.Writer
 }
 
-func (d *debugPrinter) ask(_ context.Context, req service.Request) (json.RawMessage, error) {
-	d.print(req)
-	return debugReply(req)
+func (p *printer) ask(_ context.Context, req service.Request) (json.RawMessage, error) {
+	p.print(req)
+	return replyTo(req)
 }
 
-func (d *debugPrinter) print(req service.Request) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	fmt.Fprintf(d.w, "--- %s prompt ---\n%s\n", callNameFor(req), req.Prompt)
+func (p *printer) print(req service.Request) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fmt.Fprintf(p.w, "--- %s prompt ---\n%s\n", callNameFor(req), req.Prompt)
 }
 
-func debugReply(req service.Request) (json.RawMessage, error) {
+func replyTo(req service.Request) (json.RawMessage, error) {
 	if isSplitterCall(req) {
-		return json.Marshal(debugNames{Names: []string{"DebugUnitOne", "DebugUnitTwo"}})
+		return json.Marshal(names{Names: []string{"DebugUnitOne", "DebugUnitTwo"}})
 	}
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`
@@ -42,18 +44,18 @@ func debugReply(req service.Request) (json.RawMessage, error) {
 	if err := json.Unmarshal(req.Schema, &schema); err != nil {
 		return nil, fmt.Errorf("debug reply: %w", err)
 	}
-	answers := make(map[string]debugVerdict, len(schema.Properties))
+	answers := make(map[string]verdict, len(schema.Properties))
 	for key := range schema.Properties {
-		answers[key] = debugVerdict{Satisfies: true, Reason: "fabricated by --debug, nothing was judged"}
+		answers[key] = verdict{Satisfies: true, Reason: "fabricated by --debug, nothing was judged"}
 	}
 	return json.Marshal(answers)
 }
 
-type debugNames struct {
+type names struct {
 	Names []string `json:"names"`
 }
 
-type debugVerdict struct {
+type verdict struct {
 	Satisfies bool   `json:"satisfies"`
 	Reason    string `json:"reason"`
 }
