@@ -74,6 +74,24 @@ overlap the outer one wins and the inner one is re-judged rather than fixed.
 A split is a move, so it commits on its own before anything inside it is
 touched.
 
+## Closing
+
+The commits a run makes as it goes are working state rather than history:
+they exist so a failed edit costs one rollback instead of the session. Once
+the queue is empty and the tree is green, squash them into one and leave
+whatever was already there untouched.
+
+Squash only what this run authored, and only while it is unpushed — a commit
+that has been pushed belongs to whoever has fetched it. A move is the one
+exception and keeps its own commit through the squash, for the reason it got
+its own commit in the first place: relocated code renders as delete-plus-add,
+and folding edits into that hides them. Verify the squashed tree matches the
+one that was green before it, since that is the only thing the squash may not
+change.
+
+The message names what changed, not which rules fired — a reader wants the
+shape of the edit, and the rules are already the reason the file was opened.
+
 ## Facts
 
 Local knowledge the goals cannot give you.
