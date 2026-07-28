@@ -67,4 +67,3 @@ Local knowledge the goals cannot give you.
 - Rollback is relative to HEAD. A queued file carrying uncommitted changes
   at the start of the run breaks that: have the user commit or stash them
   first, or exclude the file.
-- This file is never modified during a run.
