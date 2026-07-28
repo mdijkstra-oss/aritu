@@ -263,9 +263,6 @@ func debugReply(req service.Request) (json.RawMessage, error) {
 	return json.Marshal(answers)
 }
 
-// debugVerdict is the answer the linter's schema asks for, in the shape the
-// schema requires. Naming it keeps the fabricated pass answering the same keys a
-// real one does, rather than a literal that drifts when the schema moves.
 type debugVerdict struct {
 	Satisfies bool   `json:"satisfies"`
 	Reason    string `json:"reason"`
@@ -499,9 +496,6 @@ func knownTargetsFor(cli *CLI) ([]string, error) {
 	return kinds.Names(), nil
 }
 
-// selftestRun is the half of a selftest sweep that every rule in it shares: the
-// endpoint, the settings, the vocabulary and the streams. Only the rule's name
-// changes from one to the next, so the per-rule calls carry that alone.
 type selftestRun struct {
 	ask    service.Ask
 	cli    *CLI
@@ -518,9 +512,8 @@ func (s selftestRun) rules(ctx context.Context, names []string) lint.Exit {
 	return exit
 }
 
-// rule formats before it reports: a rule that could not be loaded still prints
-// its table, because the table is the diagnostic and an empty one says which
-// rule produced nothing.
+// A rule that could not be loaded still prints its table, because the table is
+// the diagnostic and an empty one says which rule produced nothing.
 func (s selftestRun) rule(ctx context.Context, name string) lint.Exit {
 	started := time.Now()
 	opts, results, runErr := s.results(ctx, name)
