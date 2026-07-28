@@ -190,6 +190,17 @@ func TestAnswerFrom(t *testing.T) {
 			want: `{"ok":true}`,
 		},
 		{
+			name: "an answer wrapped in a code fence is unwrapped",
+			body: "{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"```json\\n{\\\"ok\\\":true}\\n```\"}]}]}",
+			want: `{"ok":true}`,
+		},
+		{
+			name:          "an answer of prose is worth another turn and carries what the model said",
+			body:          `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"I looked at the file and it seems fine."}]}]}`,
+			wantErr:       []string{"prose instead of JSON", "I looked at the file"},
+			wantAnotherGo: true,
+		},
+		{
 			name:          "a failed status is worth another turn and carries the code and message",
 			body:          `{"status":"failed","error":{"code":"server_error","message":"upstream exploded"},"output":[]}`,
 			wantErr:       []string{"server_error", "upstream exploded"},

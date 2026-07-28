@@ -95,8 +95,9 @@ func ParamsFor(req Request) (responses.ResponseNewParams, error) {
 // json_schema format the output text is the structured value, so there is nothing
 // to unwrap.
 //
-// A refusal and a run the endpoint marked failed or incomplete are the conditions
-// a fresh turn can fix, and only they are reported as retryable.
+// A refusal, a run the endpoint marked failed or incomplete, and an answer that
+// is not JSON are the conditions a fresh turn can fix, and only they are
+// reported as retryable.
 func AnswerFrom(reply responses.Response) (json.RawMessage, error) {
 	if refusal := findRefusal(reply); refusal != "" {
 		return nil, fmt.Errorf("service: %w: refused: %s", errModelFailure, refusal)
@@ -107,6 +108,10 @@ func AnswerFrom(reply responses.Response) (json.RawMessage, error) {
 	answer := strings.TrimSpace(reply.OutputText())
 	if answer == "" {
 		return nil, fmt.Errorf("service: response carried no output text, and its status was %q", reply.Status)
+	}
+	answer = unfenced(answer)
+	if !json.Valid([]byte(answer)) {
+		return nil, fmt.Errorf("service: %w: answered prose instead of JSON: %s", errModelFailure, snippetOf(answer))
 	}
 	return json.RawMessage(answer), nil
 }
@@ -201,6 +206,32 @@ func formatFor(schema json.RawMessage) (responses.ResponseFormatTextConfigUnionP
 	format := responses.ResponseFormatTextConfigParamOfJSONSchema(schemaName, decoded)
 	format.OfJSONSchema.Strict = param.NewOpt(true)
 	return format, nil
+}
+
+// unfenced strips the Markdown fence off an answer that is one whole fenced
+// block. The format asks for bare JSON, but an endpoint that merely relays a
+// model's text can deliver the same value wrapped, and the wrapping is not the
+// model changing its answer.
+func unfenced(text string) string {
+	if !strings.HasPrefix(text, "```") || !strings.HasSuffix(text, "```") {
+		return text
+	}
+	body := strings.TrimSuffix(text, "```")
+	if _, after, hasBreak := strings.Cut(body, "\n"); hasBreak {
+		return strings.TrimSpace(after)
+	}
+	return text
+}
+
+// snippetOf keeps a surfaced answer to one readable line, so a page of prose
+// does not become a page of error.
+func snippetOf(text string) string {
+	const ceiling = 120
+	flattened := strings.Join(strings.Fields(text), " ")
+	if len(flattened) <= ceiling {
+		return flattened
+	}
+	return flattened[:ceiling] + "…"
 }
 
 // findRefusal reports the refusal text the model gave, if it gave one. A refusal
