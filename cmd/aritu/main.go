@@ -188,10 +188,10 @@ func validate(cli CLI) error {
 	return nil
 }
 
-// efforts are the levels aritu offers. The Responses API also accepts none and
-// minimal, which this tool has no use for: a linter that reasons about nothing is
-// not answering the question it was asked.
-var efforts = []string{"low", "medium", "high", "xhigh", "max"}
+// efforts are the levels aritu offers. The Responses API also accepts none,
+// which this tool has no use for: a linter that reasons about nothing is not
+// answering the question it was asked.
+var efforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
 func isKnownEffort(effort string) bool {
 	return effort == "" || slices.Contains(efforts, effort)
