@@ -95,6 +95,22 @@ a new location is the right answer, but name it in the report: a new home is a
 claim about the repository's shape rather than a file move, and that is the
 user's call.
 
+A piece that turns out to be a mechanism — a cache, a pool, a retry, a queue,
+statable without the program's vocabulary — is searched for before it is
+written. Read what the repository already has for what it nearly does rather
+than what it does: a component shaped around its first caller becomes the shared
+one by widening, a parameter where a constant was, a type parameter where a
+type was, a hook where a step was fixed. One widened component serving both
+callers is the outcome to reach for, and a second implementation beside the
+first is the failure this is guarding against — it is how the same mechanism
+gets written twice in one repository.
+
+Widening changes everything already calling it, so the existing callers come
+through with their behaviour identical and it lands as its own commit. Where
+widening would cost the existing component the clarity that made it worth
+having, two mechanisms are the honest answer — say so in the report rather than
+forcing the fit.
+
 The imports point one way wherever it lands: the generic half never learns the
 domain, the domain never learns the delivery mechanism, and the entry point is
 the only place allowed to know all three. A placement that inverts one of those
