@@ -218,7 +218,7 @@ a column of one repeated value teaches nothing.
   aritu has one severity and one vote count per run, and nothing here changes that.
 - **Shipping a `config` kind.** Plausible, unclaimed by any rule that exists. The vocabulary
   is open, so the repository that wants it writes two lines.
-- **A `language:` key, anywhere.** Unchanged from `feat-grouped-rule-set`. The model reads
+- **A `language:` key, anywhere.** Unchanged from `05-feat-grouped-rule-set`. The model reads
   the file; the filesystem layer resolves paths; the conventions table answers the rest.
 - **Writing the first non-test rule.** This feature makes one expressible. Which one to
   write is a separate decision.
