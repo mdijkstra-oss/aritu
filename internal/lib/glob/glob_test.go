@@ -444,3 +444,58 @@ func rooted(root string, paths []string) []string {
 	}
 	return rooted
 }
+
+func TestMatchesAny(t *testing.T) {
+	excluded := []string{"vendor/**", "**/*.gen.go"}
+
+	tests := []struct {
+		name     string
+		patterns []string
+		path     string
+		want     bool
+	}{
+		{
+			name:     "the first pattern answers for a path under it",
+			patterns: excluded,
+			path:     "vendor/pkg/errors.go",
+			want:     true,
+		},
+		{
+			name:     "a later pattern is reached when an earlier one misses",
+			patterns: excluded,
+			path:     "internal/api/client.gen.go",
+			want:     true,
+		},
+		{
+			name:     "a path no pattern covers is not matched",
+			patterns: excluded,
+			path:     "internal/api/client.go",
+		},
+		{
+			name: "no patterns match nothing",
+			path: "vendor/pkg/errors.go",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MatchesAny(tt.patterns, tt.path); got != tt.want {
+				t.Errorf("MatchesAny(%q, %q) = %t, want %t", tt.patterns, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckAll(t *testing.T) {
+	if err := CheckAll([]string{"vendor/**", "**/*.gen.go"}); err != nil {
+		t.Errorf("CheckAll() = %v, want no error", err)
+	}
+
+	err := CheckAll([]string{"vendor/**", "build["})
+	if err == nil {
+		t.Fatal("CheckAll() = nil, want an error naming the pattern")
+	}
+	if !strings.Contains(err.Error(), "build[") {
+		t.Errorf("CheckAll() error = %q, want it to name %q", err, "build[")
+	}
+}

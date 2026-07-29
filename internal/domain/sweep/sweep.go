@@ -16,6 +16,7 @@ type Request struct {
 	Patterns []string
 	Rules    []rule.Rule
 	Kinds    kind.Set
+	Excluded []string
 	Dir      string
 	RulesDir string
 }
@@ -31,6 +32,7 @@ func Resolve(req Request) (Resolved, error) {
 	files, err := filesFor(req.Patterns, derivedSweep{
 		kinds:    req.Kinds,
 		targeted: targetedKindsOf(req.Rules),
+		excluded: req.Excluded,
 		rulesDir: req.RulesDir,
 	})
 	if err != nil {
@@ -54,6 +56,7 @@ func filesFor(patterns []string, derived derivedSweep) ([]string, error) {
 type derivedSweep struct {
 	kinds    kind.Set
 	targeted []string
+	excluded []string
 	rulesDir string
 }
 
@@ -62,7 +65,7 @@ func (d derivedSweep) files() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := filterOutsideRules(found, d.rulesDir)
+	files := d.sweptFrom(found)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no targets: nothing here is %s, so name a file or glob pattern",
 			strings.Join(d.targeted, " or "))
@@ -70,14 +73,20 @@ func (d derivedSweep) files() ([]string, error) {
 	return files, nil
 }
 
-func filterOutsideRules(files []string, rulesDir string) []string {
-	outside := make([]string, 0, len(files))
+func (d derivedSweep) sweptFrom(files []string) []string {
+	swept := make([]string, 0, len(files))
 	for _, file := range files {
-		if !isUnder(rulesDir, file) {
-			outside = append(outside, file)
+		if d.isSwept(file) {
+			swept = append(swept, file)
 		}
 	}
-	return outside
+	return swept
+}
+
+// The rules directory is excluded whether or not the repository said so: what
+// sits there is rule material rather than the work being judged.
+func (d derivedSweep) isSwept(file string) bool {
+	return !isUnder(d.rulesDir, file) && !glob.MatchesAny(d.excluded, file)
 }
 
 func isUnder(dir, path string) bool {

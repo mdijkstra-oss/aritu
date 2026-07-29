@@ -138,6 +138,44 @@ func TestFilesFor(t *testing.T) {
 	}
 }
 
+func TestFilesForWithExclusions(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "alpha_test.go"), testFileBody)
+	writeFile(t, filepath.Join(root, "generated", "beta_test.go"), testFileBody)
+	at := func(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
+
+	kinds, err := kind.Resolve(root, nil)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	derived := derivedSweep{
+		kinds:    kinds,
+		targeted: []string{"tests"},
+		excluded: []string{at("generated", "**")},
+		rulesDir: filepath.Join(root, "rules"),
+	}
+
+	t.Run("the derived sweep leaves out what exclude names", func(t *testing.T) {
+		got, err := filesFor(nil, derived)
+		if err != nil {
+			t.Fatalf("filesFor() error = %v, want none", err)
+		}
+		if want := []string{at("alpha_test.go")}; !reflect.DeepEqual(got, want) {
+			t.Errorf("filesFor() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("naming an excluded file is honoured, because that was asked for", func(t *testing.T) {
+		got, err := filesFor([]string{at("generated", "beta_test.go")}, derived)
+		if err != nil {
+			t.Fatalf("filesFor() error = %v, want none", err)
+		}
+		if want := []string{at("generated", "beta_test.go")}; !reflect.DeepEqual(got, want) {
+			t.Errorf("filesFor() = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestCheckEveryFileIsTargeted(t *testing.T) {
 	root := t.TempDir()
 	kinds, err := kind.Resolve(root, nil)

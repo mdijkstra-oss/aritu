@@ -30,6 +30,7 @@ func applyOptions(resolved settings) (audit.Options, error) {
 		Patterns: resolved.Patterns,
 		Rules:    rules,
 		Kinds:    kinds,
+		Excluded: resolved.Config.Exclude,
 		Dir:      dir,
 		RulesDir: glob.Rooted(dir, resolved.RulesDir),
 	})

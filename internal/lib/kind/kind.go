@@ -76,19 +76,15 @@ func declaredKind(name string, patterns []string) Kind {
 }
 
 func coveredByAny(patterns []string) func(string) bool {
-	return func(path string) bool {
-		return slices.ContainsFunc(patterns, func(pattern string) bool { return matches(pattern, path) })
-	}
+	return func(path string) bool { return glob.MatchesAny(patterns, path) }
 }
 
 func checkPatternsAreUsable(name string, patterns []string) error {
 	if len(patterns) == 0 {
 		return fmt.Errorf("target %q: names no patterns, so a rule about it would judge nothing", name)
 	}
-	for _, pattern := range patterns {
-		if !glob.IsValid(pattern) {
-			return fmt.Errorf("target %q: pattern %q: syntax error", name, pattern)
-		}
+	if err := glob.CheckAll(patterns); err != nil {
+		return fmt.Errorf("target %q: %w", name, err)
 	}
 	return nil
 }
@@ -148,14 +144,4 @@ func (s Set) named(name string) Kind {
 		panic(fmt.Sprintf("target %q reached matching without being validated", name))
 	}
 	return found
-}
-
-// matches panics for the same reason: every declared pattern was checked when the
-// set was resolved, and a built-in one is written in this file.
-func matches(pattern, path string) bool {
-	covered, err := glob.Match(pattern, path)
-	if err != nil {
-		panic(fmt.Sprintf("pattern %q reached matching without being validated: %v", pattern, err))
-	}
-	return covered
 }

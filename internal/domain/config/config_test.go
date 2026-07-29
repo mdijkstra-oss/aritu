@@ -36,6 +36,9 @@ targets:
     - 'cmd/**/*_test.go'
   migrations:
     - 'db/migrate/**/*.sql'
+exclude:
+  - 'vendor/**'
+  - '**/*.gen.go'
 `,
 			want: func(dir string) Config {
 				return Config{
@@ -61,8 +64,17 @@ targets:
 						},
 						"migrations": {filepath.Join(dir, "db/migrate/**/*.sql")},
 					},
+					Exclude: []string{
+						filepath.Join(dir, "vendor/**"),
+						filepath.Join(dir, "**/*.gen.go"),
+					},
 				}
 			},
+		},
+		{
+			name:    "an exclude pattern that does not parse names itself",
+			file:    "exclude: ['vendor[']\n",
+			wantErr: "vendor[",
 		},
 		{
 			name: "keys the file omits stay absent",

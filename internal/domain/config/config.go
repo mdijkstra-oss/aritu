@@ -32,6 +32,8 @@ type Config struct {
 
 	// A key matching a built-in kind replaces it rather than extending it.
 	Targets map[string][]string `yaml:"targets"`
+
+	Exclude []string `yaml:"exclude"`
 }
 
 type Service struct {
@@ -87,9 +89,13 @@ func Load(path string) (Config, error) {
 	if err := decoder.Decode(&config); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("config %s: %w", path, err)
 	}
+	if err := glob.CheckAll(config.Exclude); err != nil {
+		return Config{}, fmt.Errorf("config %s: exclude: %w", path, err)
+	}
 	config.Dir = filepath.Dir(path)
 	config.Rules.Dir = resolvedPathAgainst(config.Dir, config.Rules.Dir)
 	config.Targets = allTargetsResolvedAgainst(config.Dir, config.Targets)
+	config.Exclude = allResolvedAgainst(config.Dir, config.Exclude)
 	return config, nil
 }
 

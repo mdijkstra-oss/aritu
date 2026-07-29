@@ -28,6 +28,28 @@ func IsValid(pattern string) bool {
 	return doublestar.ValidatePattern(pattern)
 }
 
+func CheckAll(patterns []string) error {
+	for _, pattern := range patterns {
+		if !IsValid(pattern) {
+			return fmt.Errorf("pattern %q: syntax error", pattern)
+		}
+	}
+	return nil
+}
+
+// MatchesAny panics on a pattern that does not parse, so it is for callers that
+// ran CheckAll when the patterns were read and would have nothing to do with an
+// error here.
+func MatchesAny(patterns []string, path string) bool {
+	return slices.ContainsFunc(patterns, func(pattern string) bool {
+		matched, err := Match(pattern, path)
+		if err != nil {
+			panic(fmt.Sprintf("pattern %q reached matching without being validated: %v", pattern, err))
+		}
+		return matched
+	})
+}
+
 func Rooted(base, path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path

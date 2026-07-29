@@ -253,6 +253,8 @@ rules:
 targets:
   tests: ['internal/**/*_test.go', 'cmd/**/*_test.go']   # replaces the built-in
   migrations: ['db/migrate/**/*.sql']                    # a kind of your own
+
+exclude: ['vendor/**', '**/*.gen.go']   # kept out of the derived sweep
 ```
 
 `service.endpoint` is the base URL of any Responses-compatible API — a gateway, a
@@ -299,6 +301,38 @@ resolve against your shell. Each resolves in the frame it was written in.
 
 An unknown key is an error naming it. A setting that silently does nothing is
 worse than one that refuses to load.
+
+### Excluding files
+
+`exclude` is what the derived sweep must not reach — vendored trees, generated
+code, a directory you have decided not to fight about yet:
+
+```yaml
+exclude:
+  - 'vendor/**'
+  - '**/*.pb.go'
+  - 'docs/legacy/**'
+```
+
+**The patterns are the same ones `targets` takes**, resolved against the config
+file like every other path in it. There is no `.arituignore`, and that is
+deliberate: a dotfile named for a tool carries gitignore's syntax by convention —
+anchoring, `!` re-inclusion, directory-only trailing slashes — and a repository
+would then be writing patterns two ways depending on which key they landed in.
+One pattern language is worth more than the shorthand a second one buys. Write
+`'**/node_modules/**'`, not `node_modules/`.
+
+A pattern that does not parse fails the load naming itself, like any other bad
+key.
+
+**It bounds what is derived, not what you ask for.** `aritu apply` with no
+arguments leaves excluded files out; `aritu apply internal/api/client.gen.go`
+judges it. This is the rule the rules directory and a parked rule already follow —
+what was derived respects the boundary, what was asked for overrules it — and it
+is what keeps `aritu apply $(git diff --name-only)` meaning exactly what you typed.
+
+The rules directory is excluded whether or not `exclude` mentions it, so a
+repository never has to write that line.
 
 ## Rules
 

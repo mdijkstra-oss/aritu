@@ -58,6 +58,8 @@ func TestExecute(t *testing.T) {
 	includeRepo := writeRepo(t, "rules:\n  dir: ./rules\ninclude:\n  - 'internal/**/*_test.go'\n")
 	sweepRepo := writeRepo(t, "rules:\n  dir: ./rules\n"+serviceBlock(satisfied))
 	targetsRepo := writeRepo(t, "rules:\n  dir: ./rules\ntargets:\n  tests:\n    - 'internal/pkg/*_test.go'\n"+serviceBlock(satisfied))
+	excludeRepo := writeExcluding(t, "rules:\n  dir: ./rules\nexclude: ['generated/**']\n"+serviceBlock(satisfied))
+	badExcludeRepo := writeExcluding(t, "rules:\n  dir: ./rules\nexclude: ['generated[']\n"+serviceBlock(satisfied))
 	votesRepoPkg := filepath.Join(votesRepo, "internal", "pkg")
 
 	tests := []struct {
@@ -286,6 +288,30 @@ func TestExecute(t *testing.T) {
 			wantStdout:  []string{"alpha_test.go"},
 			wantReports: 1,
 			notWantOut:  "scenario_test.go",
+		},
+		{
+			name:        "an exclude list keeps the derived sweep off what a repository has ruled out",
+			dir:         excludeRepo,
+			args:        []string{"apply", "--output", "json"},
+			want:        lint.ExitPass,
+			wantStdout:  []string{"alpha_test.go"},
+			wantReports: 1,
+			notWantOut:  "beta_test.go",
+		},
+		{
+			name:        "but naming an excluded file is honoured, because that was asked for",
+			dir:         excludeRepo,
+			args:        []string{"apply", "--output", "json", filepath.Join("generated", "beta_test.go")},
+			want:        lint.ExitPass,
+			wantStdout:  []string{"beta_test.go"},
+			wantReports: 1,
+		},
+		{
+			name:       "an exclude pattern that does not parse names itself, before any rule is loaded",
+			dir:        badExcludeRepo,
+			args:       []string{"apply"},
+			want:       lint.ExitError,
+			wantStderr: []string{"exclude", "generated["},
 		},
 		{
 			name:       "a rule targeting a kind nobody defined fails before a single model call",
@@ -701,6 +727,16 @@ func writeRepo(t *testing.T, config string) string {
 	writeRulesIn(t, filepath.Join(root, "rules"), "solo")
 	writeFile(t, filepath.Join(root, "internal", "pkg", "alpha_test.go"), testFileBody)
 	writeFile(t, filepath.Join(root, "aritu.yml"), config)
+	return root
+}
+
+// writeExcluding builds a repository carrying a second test file for its exclude
+// list to speak about, so what the sweep leaves out and what it keeps can both be
+// observed in one run.
+func writeExcluding(t *testing.T, config string) string {
+	t.Helper()
+	root := writeRepo(t, config)
+	writeFile(t, filepath.Join(root, "generated", "beta_test.go"), testFileBody)
 	return root
 }
 
