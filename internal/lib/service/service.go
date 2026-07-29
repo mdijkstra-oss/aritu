@@ -14,7 +14,6 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-// Request is one non-interactive call to a Responses-compatible endpoint.
 type Request struct {
 	Prompt string
 	Model  string
@@ -22,16 +21,10 @@ type Request struct {
 	Schema json.RawMessage
 }
 
-// Ask is the seam between domain logic and the model endpoint, so callers can be
-// exercised against table data instead of a live model.
 type Ask func(ctx context.Context, req Request) (json.RawMessage, error)
 
-// SystemPrompt is what keeps the reply to bare JSON and off tool use.
 const SystemPrompt = "You are a static-analysis tool. You have no tools and must not attempt to use any. Answer only with the requested JSON."
 
-// New returns an Ask that calls the Responses API at endpoint. An empty token
-// sends no Authorization header at all, which is what a local endpoint that
-// ignores auth wants.
 func New(endpoint, token string) Ask {
 	client := responses.NewResponseService(clientOptions(endpoint, token)...)
 	return func(ctx context.Context, req Request) (json.RawMessage, error) {
@@ -50,13 +43,6 @@ func New(endpoint, token string) Ask {
 	}
 }
 
-// Token resolves the bearer token from the name of an environment variable. The
-// config field holds a name rather than a secret, so the lookup is passed in and
-// the environment is read at the boundary.
-//
-// No name means no auth, which is not an error. A name whose variable is unset or
-// empty is, because the alternative is paying for the typo as a wall of 401s from
-// every call in the sweep, arriving minutes later.
 func Token(varName string, lookup func(string) (string, bool)) (string, error) {
 	if varName == "" {
 		return "", nil
@@ -68,9 +54,6 @@ func Token(varName string, lookup func(string) (string, bool)) (string, error) {
 	return value, nil
 }
 
-// ParamsFor maps a Request onto the Responses parameters. Effort is omitted
-// entirely when empty rather than sent as a blank string, and a request carrying
-// no schema asks for no particular format.
 func ParamsFor(req Request) (responses.ResponseNewParams, error) {
 	params := responses.ResponseNewParams{
 		Model:        req.Model,
@@ -91,13 +74,6 @@ func ParamsFor(req Request) (responses.ResponseNewParams, error) {
 	return params, nil
 }
 
-// AnswerFrom reads the model's answer out of a response. With a strict
-// json_schema format the output text is the structured value, so there is nothing
-// to unwrap.
-//
-// A refusal, a run the endpoint marked failed or incomplete, and an answer that
-// is not JSON are the conditions a fresh turn can fix, and only they are
-// reported as retryable.
 func AnswerFrom(reply responses.Response) (json.RawMessage, error) {
 	if refusal := findRefusal(reply); refusal != "" {
 		return nil, fmt.Errorf("service: %w: refused: %s", errModelFailure, refusal)
@@ -116,15 +92,7 @@ func AnswerFrom(reply responses.Response) (json.RawMessage, error) {
 	return json.RawMessage(answer), nil
 }
 
-// Retry runs a call again when the model failed to answer in the shape it was
-// asked for. This starts a fresh turn, which is what recovers a call whose whole
-// context went wrong rather than one unlucky sample.
-//
-// Only a failure the model itself reported is retried. A refused connection, a
-// rejected request and a cancelled context are conditions a second attempt would
-// meet again, and retrying them would turn a clear error into a slow one. The
-// SDK already paces 408, 409, 429 and 5xx with backoff, which is a different
-// failure from this one. Attempts below two leave the ask untouched.
+// The SDK already paces 408, 409, 429 and 5xx with backoff of its own.
 func Retry(ask Ask, attempts int) Ask {
 	if attempts < 2 {
 		return ask
@@ -145,10 +113,6 @@ func Retry(ask Ask, attempts int) Ask {
 	}
 }
 
-// Throttle bounds how many calls may be in flight at once. Fixture-level and
-// vote-level concurrency multiply, so a ceiling at this seam is the only one that
-// holds however the callers above it nest their goroutines. A limit below one
-// leaves the ask unbounded.
 func Throttle(ask Ask, limit int) Ask {
 	if limit < 1 {
 		return ask
@@ -165,27 +129,16 @@ func Throttle(ask Ask, limit int) Ask {
 	}
 }
 
-// errModelFailure separates a turn the endpoint itself flagged, whose text is
-// worth surfacing verbatim, from a transport that never reached a model.
 var errModelFailure = errors.New("model reported an error")
 
-// schemaName labels the response format. The API requires a name and nothing
-// reads it back, so one constant serves both call sites rather than a field on
-// Request that every caller would have to fill in.
+// The API requires the response format to carry a name.
 const schemaName = "answer"
 
-// isRetryableStatus is the whole of the retry classification: a run that failed
-// or ran out of room is worth another turn, and every other status is either an
-// answer or a condition a second turn would meet again.
 var isRetryableStatus = map[responses.ResponseStatus]bool{
 	responses.ResponseStatusFailed:     true,
 	responses.ResponseStatusIncomplete: true,
 }
 
-// clientOptions omits the Authorization header entirely when no token was
-// configured. WithAPIKey is deliberately not used: it is one header spelled a
-// particular way, and two ways to set Authorization is a precedence question
-// nobody needs to answer.
 func clientOptions(endpoint, token string) []option.RequestOption {
 	opts := []option.RequestOption{option.WithBaseURL(endpoint)}
 	if token != "" {
@@ -194,10 +147,8 @@ func clientOptions(endpoint, token string) []option.RequestOption {
 	return opts
 }
 
-// formatFor turns the schema a caller generated into a strict json_schema format,
-// so the endpoint enforces the schema rather than merely suggesting it — that is
-// the property the generated verdict schema depends on for uniqueness and
-// completeness of keys.
+// A json_schema format the endpoint enforces rather than suggests requires
+// strict, and the generated verdict schema depends on that enforcement.
 func formatFor(schema json.RawMessage) (responses.ResponseFormatTextConfigUnionParam, error) {
 	var decoded map[string]any
 	if err := json.Unmarshal(schema, &decoded); err != nil {
@@ -223,8 +174,6 @@ func unfenced(text string) string {
 	return text
 }
 
-// snippetOf keeps a surfaced answer to one readable line, so a page of prose
-// does not become a page of error.
 func snippetOf(text string) string {
 	const ceiling = 120
 	flattened := strings.Join(strings.Fields(text), " ")

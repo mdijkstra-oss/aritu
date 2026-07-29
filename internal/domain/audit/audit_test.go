@@ -666,7 +666,7 @@ func TestFormat(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := Format(&out, tc.results, tc.opts, tc.elapsed, false); err != nil {
+			if err := Format(&out, Outcome{Results: tc.results, Options: tc.opts, Elapsed: tc.elapsed}, false); err != nil {
 				t.Fatalf("Format returned %v", err)
 			}
 			if out.String() != tc.want {
@@ -717,7 +717,7 @@ func TestFormatPrintsPriorityOnlyWhereSomethingFellShort(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 			results := []Result{{Report: tc.report, Duration: 100 * time.Millisecond}}
-			if err := Format(&out, results, opts, time.Second, false); err != nil {
+			if err := Format(&out, Outcome{Results: results, Options: opts, Elapsed: time.Second}, false); err != nil {
 				t.Fatalf("Format returned %v", err)
 			}
 			if !strings.Contains(out.String(), tc.wantRow) {
@@ -749,7 +749,7 @@ func TestFormatEmitsColourOnlyWhenAsked(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := Format(&out, results, opts, time.Second, tc.colour); err != nil {
+			if err := Format(&out, Outcome{Results: results, Options: opts, Elapsed: time.Second}, tc.colour); err != nil {
 				t.Fatalf("Format returned %v", err)
 			}
 			if strings.Contains(out.String(), "\x1b[") != tc.wantEscape {

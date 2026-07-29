@@ -4,34 +4,23 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/domain/selftest"
 )
 
-// Format renders the results grouped by file and then by rule, because the reader
-// is looking at their own code rather than at the rule set. Elapsed is the wall
-// clock for the whole run.
-//
-// It is one pass of the same Reporter a watched run feeds a result at a time, so
-// a sweep prints the same bytes whether it was rendered as it went or at the end.
-func Format(w io.Writer, results []Result, opts Options, elapsed time.Duration, colour bool) error {
+func Format(w io.Writer, o Outcome, colour bool) error {
 	reporter := NewReporter(w, colour)
-	for _, result := range results {
+	for _, result := range o.Results {
 		if err := reporter.Result(result); err != nil {
 			return err
 		}
 	}
-	return reporter.Summary(results, opts, elapsed)
+	return reporter.Summary(o)
 }
 
-// Reporter writes a report one target at a time, opening a file heading whenever
-// the file changes. A sweep of any size is otherwise silent until its last model
-// call returns, which reads exactly like a hung CLI.
-//
-// Results have to arrive in the order Format prints them, which is the order Run
-// observes them in.
+// Reporter must be fed results in the order Run observes them, and writes nothing
+// until the first one arrives.
 type Reporter struct {
 	w          io.Writer
 	colour     bool
@@ -39,13 +28,10 @@ type Reporter struct {
 	hasWritten bool
 }
 
-// NewReporter renders to w. Nothing is written until the first result arrives, so
-// a run that could not start prints no heading it never earned.
 func NewReporter(w io.Writer, colour bool) *Reporter {
 	return &Reporter{w: w, colour: colour}
 }
 
-// Result writes one target's block.
 func (r *Reporter) Result(result Result) error {
 	var b strings.Builder
 	if r.startsNewFile(result.Report.File) {
@@ -60,18 +46,14 @@ func (r *Reporter) Result(result Result) error {
 	return err
 }
 
-// Summary closes the run with the one line that answers what the whole sweep did.
-func (r *Reporter) Summary(results []Result, opts Options, elapsed time.Duration) error {
+func (r *Reporter) Summary(o Outcome) error {
 	var b strings.Builder
-	writeSummary(&b, results, opts, elapsed)
+	writeSummary(&b, o)
 	_, err := io.WriteString(r.w, b.String())
 	return err
 }
 
-// Announce says what a sweep covers before its first model call, so the wait for
-// the first file to land is not spent wondering whether anything is happening.
-// It names no file: which files are in flight cannot be shown without redrawing,
-// and each one names itself when its block lands.
+// Announce goes out before Run, not after.
 func Announce(w io.Writer, opts Options) {
 	fmt.Fprintf(w, "judging %s against %s, %s\n\n",
 		plural(len(opts.Files), "file"), plural(len(opts.Rules), "rule"), plural(opts.Votes, "vote"))
@@ -92,8 +74,6 @@ func writeResult(b *strings.Builder, result Result, colour bool) error {
 	return nil
 }
 
-// A clean target has nothing to triage, so stamping every passing rule with a
-// severity would bury the handful that need one under a column of noise.
 func banner(result Result) string {
 	if !hasFallen(result) {
 		return ""
@@ -104,15 +84,10 @@ func banner(result Result) string {
 	return "  " + result.Report.Priority
 }
 
-// hasFallen reads the report rather than the Result's error, because the report
-// is what gets rendered: a target carrying a could-not-run has one either way.
 func hasFallen(result Result) bool {
 	return result.Report.Error != "" || lint.ExitFor(result.Report) != lint.ExitPass
 }
 
-// bodyOf drops the single-report header, which names the rule and the file that
-// the group headers above it already carry, and normalises the trailing blank
-// lines that differ between a judged report and one that could not run.
 func bodyOf(rendered string) string {
 	_, body, _ := strings.Cut(rendered, "\n\n")
 	return strings.TrimRight(body, "\n")
@@ -129,11 +104,8 @@ func indent(text, prefix string) string {
 	return strings.Join(lines, "\n")
 }
 
-// writeSummary answers what the whole sweep did in one line. Targets that could
-// not run are counted separately rather than folded into the failures, because a
-// partial sweep reading as a clean one is the failure mode exit code 2 exists for.
-func writeSummary(b *strings.Builder, results []Result, opts Options, elapsed time.Duration) {
-	counts := totalsOf(results)
+func writeSummary(b *strings.Builder, o Outcome) {
+	counts := totalsOf(o.Results)
 
 	parts := []string{fmt.Sprintf("%d passed", counts.passed)}
 	if fell := counts.failed + counts.split; fell > 0 {
@@ -146,8 +118,8 @@ func writeSummary(b *strings.Builder, results []Result, opts Options, elapsed ti
 		parts = append(parts, fmt.Sprintf("%d errored", counts.errored))
 	}
 	parts = append(parts, fmt.Sprintf("%s, %s, %s",
-		plural(len(opts.Files), "file"), plural(len(opts.Rules), "rule"), plural(opts.Votes, "vote")))
-	parts = append(parts, selftest.FormatDuration(elapsed))
+		plural(len(o.Options.Files), "file"), plural(len(o.Options.Rules), "rule"), plural(o.Options.Votes, "vote")))
+	parts = append(parts, selftest.FormatDuration(o.Elapsed))
 
 	fmt.Fprintf(b, "  %s\n", strings.Join(parts, "  ·  "))
 }

@@ -5,15 +5,8 @@ import (
 	"fmt"
 )
 
-// NamesSchema constrains the test-name call. Its keys are fixed rather than
-// generated because the answer's shape never varies: one array, however many tests
-// the file holds.
 const NamesSchema = `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"],"additionalProperties":false}`
 
-// VerdictSchemaFor names every key the reply may carry. An object cannot repeat a
-// key, cannot omit a required one and cannot carry an extra one, so duplicated,
-// dropped and invented units stop being errors this package has to detect and
-// become schema violations the endpoint refuses to produce.
 func VerdictSchemaFor(units []Unit) json.RawMessage {
 	answers := make(map[string]schemaNode, len(units))
 	keys := make([]string, 0, len(units))
@@ -40,9 +33,6 @@ type schemaNode struct {
 	AdditionalProperties *bool                 `json:"additionalProperties,omitempty"`
 }
 
-// closedObject is an object that may carry no key beyond the ones named, which is
-// what turns a duplicated, dropped or invented unit into a reply the endpoint's
-// strict enforcement will not produce, rather than an error this package detects.
 func closedObject(properties map[string]schemaNode, required []string) schemaNode {
 	isClosed := false
 	return schemaNode{

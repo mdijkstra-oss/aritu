@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-// Format renders the results as an aligned table. It prints whether or not the
-// run held, because the counts are the whole diagnostic. Elapsed is the wall
-// clock for the whole run, which with concurrent fixtures is less than the sum of
-// the rows and is the number a caller actually waited.
 func Format(w io.Writer, opts Options, results []Result, elapsed time.Duration) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "rule: %s  model: %s  votes: %d\n\n", opts.Rule.Name, opts.Model, opts.Votes)
@@ -27,8 +23,6 @@ func Format(w io.Writer, opts Options, results []Result, elapsed time.Duration) 
 	return tw.Flush()
 }
 
-// FormatDuration renders a duration at a precision worth reading: whole
-// milliseconds below a second, tenths of a second above it.
 func FormatDuration(d time.Duration) string {
 	if d < time.Second {
 		return d.Round(time.Millisecond).String()

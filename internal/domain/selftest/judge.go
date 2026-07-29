@@ -7,7 +7,6 @@ import (
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
-// Spec names one rule to selftest and how hard to judge it.
 type Spec struct {
 	Name     string
 	RulesDir string

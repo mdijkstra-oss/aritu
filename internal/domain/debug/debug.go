@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
-// New answers every call with a fabricated reply, printing the prompt it was
-// handed instead of sending it.
 func New(w io.Writer) service.Ask {
 	printer := &printer{w: w}
 	return printer.ask
@@ -38,17 +38,29 @@ func replyTo(req service.Request) (json.RawMessage, error) {
 	if isSplitterCall(req) {
 		return json.Marshal(names{Names: []string{"DebugUnitOne", "DebugUnitTwo"}})
 	}
+	keys, err := schemaKeysOf(req.Schema)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(satisfiedBy(keys))
+}
+
+func schemaKeysOf(raw json.RawMessage) ([]string, error) {
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`
 	}
-	if err := json.Unmarshal(req.Schema, &schema); err != nil {
+	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, fmt.Errorf("debug reply: %w", err)
 	}
-	answers := make(map[string]verdict, len(schema.Properties))
-	for key := range schema.Properties {
+	return slices.Collect(maps.Keys(schema.Properties)), nil
+}
+
+func satisfiedBy(keys []string) map[string]verdict {
+	answers := make(map[string]verdict, len(keys))
+	for _, key := range keys {
 		answers[key] = verdict{Satisfies: true, Reason: "fabricated by --debug, nothing was judged"}
 	}
-	return json.Marshal(answers)
+	return answers
 }
 
 type names struct {

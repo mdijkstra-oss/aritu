@@ -30,29 +30,17 @@ type Config struct {
 	Service  Service   `yaml:"service"`
 	Rules    Rules     `yaml:"rules"`
 
-	// Targets is the repository's own vocabulary of file kinds: each key names a
-	// kind a rule may be about, and carries the patterns that are of it. A key
-	// matching a built-in kind replaces it, so that one key keeps one meaning.
+	// A key matching a built-in kind replaces it rather than extending it.
 	Targets map[string][]string `yaml:"targets"`
 }
 
-// Service is where model calls go and who answers them. It is a block rather than
-// four loose keys because they are one answer: an endpoint, the credential it
-// wants, and the model and effort that endpoint understands. Which model names are
-// valid is a property of the endpoint serving them, so a file that moved its
-// endpoint and left its model behind would be describing a model nobody serves.
 type Service struct {
-	Endpoint *string `yaml:"endpoint"`
-	// AuthTokenVar is the NAME of an environment variable, never a token. The
-	// field is named for what it holds so that a config file read at a glance
-	// cannot be misread as a place secrets go.
+	Endpoint     *string `yaml:"endpoint"`
 	AuthTokenVar *string `yaml:"auth_token_var"`
 	Model        *string `yaml:"model"`
 	Effort       *string `yaml:"effort"`
 }
 
-// Rules is a block because the word names two things: where rules live, and which
-// of them to run.
 type Rules struct {
 	Dir     *string  `yaml:"dir"`
 	Enabled []string `yaml:"enabled"`
@@ -61,11 +49,8 @@ type Rules struct {
 // Duration reads Go's duration syntax from YAML, which has no duration type.
 type Duration time.Duration
 
-// FileName is the only name searched for. One name rather than a .yml/.yaml/.json
-// family, so there is never a question of which of them won.
 const FileName = "aritu.yml"
 
-// Find walks up from startDir to the first aritu.yml. Absence is not an error.
 func Find(startDir string) (path string, found bool, err error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -88,9 +73,6 @@ func Find(startDir string) (path string, found bool, err error) {
 	}
 }
 
-// Load decodes a config file strictly, so an unknown key fails rather than being
-// skipped, and resolves Rules.Dir and the target patterns against the file's own
-// directory — each path resolves in the frame it was written in.
 func Load(path string) (Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -111,12 +93,6 @@ func Load(path string) (Config, error) {
 	return config, nil
 }
 
-// Lookup returns the configured value for a flag name, and whether it was set. It
-// is the whole surface a kong resolver needs, so a flag the file holds no key for
-// reports false rather than failing: the resolver is asked about every flag.
-//
-// Only an absent key is unset. A key carrying a zero resolves to that zero and is
-// judged by the one validator, rather than silently leaving the default standing.
 func (c Config) Lookup(flag string) (any, bool) {
 	lookup, isKnown := lookups[flag]
 	if !isKnown {
@@ -126,7 +102,6 @@ func (c Config) Lookup(flag string) (any, bool) {
 	return value, value != nil
 }
 
-// UnmarshalYAML parses "10m" and friends, naming the value it could not read.
 func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	var raw string
 	if err := node.Decode(&raw); err != nil {
@@ -184,8 +159,6 @@ func valueOf[T any](value *T) any {
 	return *value
 }
 
-// nanosecondsOf hands the resolver the duration the flag is declared as, keeping
-// an absent timeout absent rather than turning it into an instant deadline.
 func nanosecondsOf(d *Duration) *time.Duration {
 	if d == nil {
 		return nil

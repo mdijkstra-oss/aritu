@@ -14,24 +14,12 @@ import (
 	"github.com/matthijn/aritu/prompts"
 )
 
-// Exit is a process exit status. A split vote is a rule failure, never a
-// could-not-run: routing it to ExitError would invite a commit hook to treat an
-// unsure model as a tooling problem and skip past exactly the test this tool
-// exists to catch.
 type Exit int
 
-// Unit is one judged thing, as the prompts package defines it: the name a reader
-// sees and the key the model answers under. The alias keeps it one type, so a
-// unit built here is a unit rendered there without a copy in between.
 type Unit = prompts.Unit
 
-// SourceFile is a file's path and contents as handed to the model.
 type SourceFile = prompts.File
 
-// Report is the tool's output. Verdicts maps each judged unit to how many of
-// Votes runs judged it to satisfy the rule; a strict majority passes and a tie
-// fails. Reasons carries one explanation per dissenting run, for units that
-// fell short.
 type Report struct {
 	Rule     string              `json:"rule"`
 	Priority string              `json:"priority,omitempty"`
@@ -42,7 +30,6 @@ type Report struct {
 	Error    string              `json:"error,omitempty"`
 }
 
-// Options configures one Apply run.
 type Options struct {
 	Rule   rule.Rule
 	File   string
@@ -57,8 +44,6 @@ const (
 	ExitError Exit = 2
 )
 
-// ReportFor fills the header before anything is judged, because a target that
-// fails on its first model call still has to print one.
 func ReportFor(opts Options) Report {
 	return Report{
 		Rule:     opts.Rule.Name,
@@ -68,16 +53,9 @@ func ReportFor(opts Options) Report {
 	}
 }
 
-// Apply votes on one file against one rule. Everything the rule reads is read
-// before anything is asked, so a target the rule cannot see costs no model call.
-// The returned Report carries its header even when the error is non-nil, so the
-// caller can always emit output before exiting.
 func Apply(ctx context.Context, ask service.Ask, opts Options) (Report, error) {
 	report := ReportFor(opts)
-	if opts.Votes < 1 {
-		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
-	}
-	files, err := readFiles(opts.Rule, opts.File)
+	files, err := filesToJudge(opts)
 	if err != nil {
 		return report, err
 	}
@@ -85,13 +63,9 @@ func Apply(ctx context.Context, ask service.Ask, opts Options) (Report, error) {
 	if err != nil {
 		return report, err
 	}
-	return voteOn(ctx, ask, opts, files, UnitsAt(opts.Rule.Granularity, opts.File, leaves))
+	return voteOn(ctx, ask, ballot{opts: opts, files: files, units: UnitsAt(opts.Rule.Granularity, opts.File, leaves)})
 }
 
-// Enumerate lists a file's units at the rule's own granularity. It is
-// deliberately independent of the rule's text: the splitter prompt is built from
-// the granularity and the file alone, so every rule judging one file at one
-// level asks the same question and can share the same answer.
 func Enumerate(ctx context.Context, ask service.Ask, opts Options) ([]string, error) {
 	file, err := readSourceFile(opts.File)
 	if err != nil {
@@ -100,16 +74,10 @@ func Enumerate(ctx context.Context, ask service.Ask, opts Options) ([]string, er
 	return askNames(ctx, ask, opts, file)
 }
 
-// NeedsEnumeration reports whether the model has to list a rule's units at all.
-// At file granularity the unit is the path, which costs no tokens to know and
-// cannot be disagreed with, so no enumeration is asked for.
 func NeedsEnumeration(granularity rule.Granularity) bool {
 	return granularity != rule.GranularityFile
 }
 
-// UnitsAt derives the units one rule judges. At file granularity the unit is the
-// path; at every other level it is whatever the splitter listed, because each
-// granularity asked for its own kind of unit and got exactly that.
 func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit {
 	switch granularity {
 	case rule.GranularityFile:
@@ -121,19 +89,20 @@ func UnitsAt(granularity rule.Granularity, file string, leaves []string) []Unit 
 	}
 }
 
-// Judge votes on units already enumerated. The returned Report carries its
-// header even when the error is non-nil, so the caller can always emit output
-// before exiting.
 func Judge(ctx context.Context, ask service.Ask, opts Options, units []Unit) (Report, error) {
 	report := ReportFor(opts)
-	if opts.Votes < 1 {
-		return report, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
-	}
-	files, err := readFiles(opts.Rule, opts.File)
+	files, err := filesToJudge(opts)
 	if err != nil {
 		return report, err
 	}
-	return voteOn(ctx, ask, opts, files, units)
+	return voteOn(ctx, ask, ballot{opts: opts, files: files, units: units})
+}
+
+func filesToJudge(opts Options) ([]SourceFile, error) {
+	if opts.Votes < 1 {
+		return nil, fmt.Errorf("votes must be at least 1, got %d", opts.Votes)
+	}
+	return readFiles(opts.Rule, opts.File)
 }
 
 func leavesFor(ctx context.Context, ask service.Ask, opts Options) ([]string, error) {
@@ -143,23 +112,33 @@ func leavesFor(ctx context.Context, ask service.Ask, opts Options) ([]string, er
 	return Enumerate(ctx, ask, opts)
 }
 
-func voteOn(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (Report, error) {
-	report := ReportFor(opts)
+type ballot struct {
+	opts  Options
+	files []SourceFile
+	units []Unit
+}
+
+func (b ballot) withUnits(units []Unit) ballot {
+	b.units = units
+	return b
+}
+
+func voteOn(ctx context.Context, ask service.Ask, cast ballot) (Report, error) {
+	report := ReportFor(cast.opts)
 
 	judge := func(ctx context.Context, _ int) (round, error) {
-		return askVerdicts(ctx, ask, opts, files, units)
+		return askVerdicts(ctx, ask, cast)
 	}
-	rounds, err := vote.Collect(ctx, opts.Votes, judge)
+	rounds, err := vote.Collect(ctx, cast.opts.Votes, judge)
 	if err != nil {
 		return report, err
 	}
 
 	report.Verdicts = vote.Tally(verdictsOf(rounds))
-	report.Reasons = collectReasons(rounds, report.Verdicts, opts.Votes)
+	report.Reasons = collectReasons(rounds, report.Verdicts, cast.opts.Votes)
 	return report, nil
 }
 
-// ExitFor derives the exit status of a completed report.
 func ExitFor(r Report) Exit {
 	for _, count := range r.Verdicts {
 		if OutcomeFor(count, r.Votes) != OutcomePass {
@@ -169,9 +148,6 @@ func ExitFor(r Report) Exit {
 	return ExitPass
 }
 
-// BuildNamesPrompt asks the model to list a file's units of one rule's kind. It
-// is never called at file granularity, where the unit is the path and no model is
-// needed to know it.
 func BuildNamesPrompt(granularity rule.Granularity, source SourceFile) string {
 	if !NeedsEnumeration(granularity) {
 		panic(fmt.Sprintf("no names prompt for granularity: %s", granularity))
@@ -179,16 +155,6 @@ func BuildNamesPrompt(granularity rule.Granularity, source SourceFile) string {
 	return prompts.Splitter(granularity.String(), source)
 }
 
-// BuildVerdictPrompt frames one rule's criterion around the files under judgement
-// and the exact units to judge. The units are listed rather than left to be
-// re-derived: two independent enumerations of twenty-five table rows will phrase one
-// of them differently sooner or later, and every such disagreement would surface as
-// a could-not-run.
-//
-// The rule reaches the model as rule.Section renders it, which is the same block
-// the rulebook hands a writer, heading and all. Judging against a differently
-// worded copy of the standard somebody was given is how a rule ends up meaning two
-// things, so there is only ever the one rendering.
 func BuildVerdictPrompt(judged rule.Rule, files []SourceFile, units []Unit) string {
 	return prompts.Linter(judged.Granularity.String(), rule.Section(judged), units, files)
 }
@@ -202,8 +168,6 @@ type verdictAnswer struct {
 	Reason    string `json:"reason"`
 }
 
-// round is one run's answer: a verdict per unit, and the model's one-line
-// justification for each.
 type round struct {
 	verdicts map[string]bool
 	reasons  map[string]string
@@ -267,13 +231,13 @@ func askNames(ctx context.Context, ask service.Ask, opts Options, file SourceFil
 // same property it would have had in one call.
 const maxUnitsPerCall = 50
 
-func askVerdicts(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (round, error) {
+func askVerdicts(ctx context.Context, ask service.Ask, cast ballot) (round, error) {
 	judged := round{
-		verdicts: make(map[string]bool, len(units)),
-		reasons:  make(map[string]string, len(units)),
+		verdicts: make(map[string]bool, len(cast.units)),
+		reasons:  make(map[string]string, len(cast.units)),
 	}
-	for _, batch := range batchesOf(units, maxUnitsPerCall) {
-		answers, err := askBatch(ctx, ask, opts, files, batch)
+	for _, batch := range batchesOf(cast.units, maxUnitsPerCall) {
+		answers, err := askBatch(ctx, ask, cast.withUnits(batch))
 		if err != nil {
 			return round{}, err
 		}
@@ -286,12 +250,13 @@ func askVerdicts(ctx context.Context, ask service.Ask, opts Options, files []Sou
 	return judged, nil
 }
 
-func askBatch(ctx context.Context, ask service.Ask, opts Options, files []SourceFile, units []Unit) (map[string]verdictAnswer, error) {
+func askBatch(ctx context.Context, ask service.Ask, cast ballot) (map[string]verdictAnswer, error) {
+	opts := cast.opts
 	raw, err := ask(ctx, service.Request{
-		Prompt: BuildVerdictPrompt(opts.Rule, files, units),
+		Prompt: BuildVerdictPrompt(opts.Rule, cast.files, cast.units),
 		Model:  opts.Model,
 		Effort: opts.Effort,
-		Schema: VerdictSchemaFor(units),
+		Schema: VerdictSchemaFor(cast.units),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("judging %s against rule %s: %w", opts.File, opts.Rule.Name, err)
@@ -301,7 +266,7 @@ func askBatch(ctx context.Context, ask service.Ask, opts Options, files []Source
 	if err := json.Unmarshal(raw, &answers); err != nil {
 		return nil, fmt.Errorf("reading verdicts for %s: %w", opts.File, err)
 	}
-	if err := checkKeysMatch(units, answers, opts.File); err != nil {
+	if err := checkKeysMatch(cast.units, answers, opts.File); err != nil {
 		return nil, err
 	}
 	return answers, nil
@@ -323,10 +288,6 @@ func verdictsOf(rounds []round) []map[string]bool {
 	return verdicts
 }
 
-// collectReasons keeps the explanations for units that fell short of unanimity.
-// A unit every run accepted has nothing to explain, and one entry per dissenting
-// run is itself the tuning signal: four differently worded rejections say
-// something that four identical ones do not.
 func collectReasons(rounds []round, counts map[string]int, votes int) map[string][]string {
 	reasons := map[string][]string{}
 	for unit, count := range counts {
@@ -348,10 +309,6 @@ func collectReasons(rounds []round, counts map[string]int, votes int) map[string
 	return reasons
 }
 
-// uniqueNames collapses repeats while keeping first-listed order. A repeated
-// name is not necessarily the model misbehaving — a file can hold two methods
-// called Help — so the repeats fold into one judged unit rather than refusing
-// the run.
 func uniqueNames(names []string) []string {
 	seen := make(map[string]bool, len(names))
 	unique := make([]string, 0, len(names))

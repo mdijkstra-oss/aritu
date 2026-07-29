@@ -6,8 +6,6 @@ type Selection struct {
 	Enabled  []string
 }
 
-// Names picks the rules to run: those asked for by name, else those the config
-// enables, else every rule in the directory.
 func Names(selection Selection) ([]string, error) {
 	if len(selection.Explicit) > 0 {
 		return selection.Explicit, nil
@@ -18,7 +16,6 @@ func Names(selection Selection) ([]string, error) {
 	return List(selection.RulesDir)
 }
 
-// LoadAll loads each named rule, failing on the first that cannot be read.
 func LoadAll(rulesDir string, names, knownTargets []string) ([]Rule, error) {
 	rules := make([]Rule, 0, len(names))
 	for _, name := range names {

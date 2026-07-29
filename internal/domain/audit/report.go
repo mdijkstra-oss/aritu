@@ -9,13 +9,11 @@ import (
 	"github.com/matthijn/aritu/internal/domain/lint"
 )
 
-// Envelope is the --output json shape. The top level is no longer one report, and
-// emitting a bare report for a single target would make every consumer branch.
+// Envelope is the --output json wire shape.
 type Envelope struct {
 	Reports []lint.Report `json:"reports"`
 }
 
-// EnvelopeOf collects the reports for JSON output, in the same order Format prints.
 func EnvelopeOf(results []Result) Envelope {
 	reports := make([]lint.Report, 0, len(results))
 	for _, result := range results {
@@ -24,20 +22,18 @@ func EnvelopeOf(results []Result) Envelope {
 	return Envelope{Reports: reports}
 }
 
-// Outcome is everything a finished run has to say for itself.
 type Outcome struct {
 	Results []Result
 	Options Options
 	Elapsed time.Duration
 }
 
-// Reporting takes each result as it lands and then the whole run.
 type Reporting struct {
+	// A nil Observe stays quiet until Finish.
 	Observe func(Result)
 	Finish  func(Outcome) error
 }
 
-// Pretty streams each result as it lands and closes with a summary.
 func Pretty(w io.Writer, colour bool) Reporting {
 	stream := &prettyStream{out: NewReporter(w, colour)}
 	return Reporting{Observe: stream.observe, Finish: stream.finish}
@@ -58,11 +54,9 @@ func (p *prettyStream) finish(o Outcome) error {
 	if p.first != nil {
 		return p.first
 	}
-	return p.out.Summary(o.Results, o.Options, o.Elapsed)
+	return p.out.Summary(o)
 }
 
-// JSON writes one document at the end and observes nothing: half a JSON
-// document is not parseable.
 func JSON(w io.Writer) Reporting {
 	return Reporting{Finish: func(o Outcome) error { return writeJSON(w, o) }}
 }
@@ -76,7 +70,6 @@ func writeJSON(w io.Writer, o Outcome) error {
 	return err
 }
 
-// Silent reports nothing at all.
 func Silent() Reporting {
 	return Reporting{
 		Observe: func(Result) {},

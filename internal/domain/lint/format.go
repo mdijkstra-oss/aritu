@@ -8,55 +8,45 @@ import (
 	"strings"
 )
 
-// Format renders a report for a person rather than a parser: the units that fell
-// short, grouped under the function that declares them, with the model's reason
-// under each. Units that passed appear only in the closing count — a green row
-// per unit says nothing the count does not, and on a corpus of any size those
-// rows push the failures, the reason anyone is reading, off the screen.
-//
-// A count appears whenever the vote was not unanimous. The mark carries the
-// decision; the count is how close it was, which is what a prompt being tuned
-// needs to see.
 func Format(w io.Writer, r Report, colour bool) error {
-	p := paletteFor(colour)
-	var b strings.Builder
+	pen := pen{colours: paletteFor(colour)}
+	p := pen.colours
 
-	fmt.Fprintf(&b, "%s%s%s  %s%s%s\n\n", p.bold, r.Rule, p.reset, p.dim, r.File, p.reset)
+	fmt.Fprintf(&pen.buf, "%s%s%s  %s%s%s\n\n", p.bold, r.Rule, p.reset, p.dim, r.File, p.reset)
 
 	if r.Error != "" {
-		fmt.Fprintf(&b, "  %s✗ could not run%s\n    %s%s%s\n\n", p.fail, p.reset, p.dim, r.Error, p.reset)
-		_, err := io.WriteString(w, b.String())
+		fmt.Fprintf(&pen.buf, "  %s✗ could not run%s\n    %s%s%s\n\n", p.fail, p.reset, p.dim, r.Error, p.reset)
+		_, err := io.WriteString(w, pen.buf.String())
 		return err
 	}
 	if len(r.Verdicts) == 0 {
-		fmt.Fprintf(&b, "  %sno units to judge%s\n\n", p.dim, p.reset)
-		_, err := io.WriteString(w, b.String())
+		fmt.Fprintf(&pen.buf, "  %sno units to judge%s\n\n", p.dim, p.reset)
+		_, err := io.WriteString(w, pen.buf.String())
 		return err
 	}
 
 	for _, group := range groupsOf(r.Verdicts) {
-		writeGroup(&b, p, group, r, len(group.Cases) == 0)
+		writeGroup(&pen, group, r)
 	}
-	writeSummary(&b, p, r)
+	writeSummary(&pen, r)
 
-	_, err := io.WriteString(w, b.String())
+	_, err := io.WriteString(w, pen.buf.String())
 	return err
 }
 
-// Outcome is how one unit fared across the votes.
+type pen struct {
+	buf     strings.Builder
+	colours palette
+}
+
 type Outcome int
 
 const (
-	// OutcomePass is a majority judging the unit to satisfy the rule.
 	OutcomePass Outcome = iota + 1
-	// OutcomeSplit is an exact tie, which fails: half the votes is not a majority.
 	OutcomeSplit
-	// OutcomeFail is a majority judging the unit to fall short.
 	OutcomeFail
 )
 
-// OutcomeFor reads a unit's count against the votes it was given. A strict
-// majority carries the unit; a tie fails it.
 func OutcomeFor(count, votes int) Outcome {
 	switch {
 	case count*2 > votes:
@@ -75,18 +65,12 @@ type reportGroup struct {
 	Cases    []reportCase
 }
 
-// reportCase keeps the full identifier alongside the label it prints, because
-// reasons are keyed by identifier and two functions can carry the same case label.
 type reportCase struct {
 	Unit  string
 	Label string
 	Count int
 }
 
-// splitUnit separates the test from the case a leaf name carries. It takes the
-// last " (" rather than the first because the half in front of it is a namespace
-// path of arbitrary prose — a grouping block may be named "Parser (v2)" — while the
-// case is always the trailing parenthesis the enumeration appended.
 func splitUnit(name string) (function, caseName string, hasCase bool) {
 	open := strings.LastIndex(name, " (")
 	if open < 0 || !strings.HasSuffix(name, ")") {
@@ -119,24 +103,24 @@ func groupsOf(verdicts map[string]int) []reportGroup {
 	return groups
 }
 
-func writeGroup(b *strings.Builder, p palette, group reportGroup, r Report, standalone bool) {
-	if standalone {
+func writeGroup(w *pen, group reportGroup, r Report) {
+	if len(group.Cases) == 0 {
 		if OutcomeFor(group.Count, r.Votes) == OutcomePass {
 			return
 		}
-		writeUnit(b, p, "  ", group.Unit, group.Function, group.Count, r)
-		b.WriteString("\n")
+		writeUnit(w, "  ", reportCase{Unit: group.Unit, Label: group.Function, Count: group.Count}, r)
+		w.buf.WriteString("\n")
 		return
 	}
 	fallen := filterFallen(group.Cases, r.Votes)
 	if len(fallen) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "  %s%s%s\n", p.bold, group.Function, p.reset)
+	fmt.Fprintf(&w.buf, "  %s%s%s\n", w.colours.bold, group.Function, w.colours.reset)
 	for _, c := range fallen {
-		writeUnit(b, p, "    ", c.Unit, c.Label, c.Count, r)
+		writeUnit(w, "    ", c, r)
 	}
-	b.WriteString("\n")
+	w.buf.WriteString("\n")
 }
 
 func filterFallen(cases []reportCase, votes int) []reportCase {
@@ -149,22 +133,19 @@ func filterFallen(cases []reportCase, votes int) []reportCase {
 	return fallen
 }
 
-func writeUnit(b *strings.Builder, p palette, indent, unit, label string, count int, r Report) {
-	outcome := OutcomeFor(count, r.Votes)
-	fmt.Fprintf(b, "%s%s%s%s %s", indent, colourOf(p, outcome), markOf(outcome), p.reset, label)
-	if count > 0 && count < r.Votes {
-		fmt.Fprintf(b, " %s(%d of %d)%s", p.dim, count, r.Votes, p.reset)
+func writeUnit(w *pen, indent string, c reportCase, r Report) {
+	p := w.colours
+	outcome := OutcomeFor(c.Count, r.Votes)
+	fmt.Fprintf(&w.buf, "%s%s%s%s %s", indent, colourOf(p, outcome), markOf(outcome), p.reset, c.Label)
+	if c.Count > 0 && c.Count < r.Votes {
+		fmt.Fprintf(&w.buf, " %s(%d of %d)%s", p.dim, c.Count, r.Votes, p.reset)
 	}
-	b.WriteString("\n")
-	for _, reason := range reasonsFor(r, unit, count) {
-		fmt.Fprintf(b, "%s  %s%s%s\n", indent, p.reason, reason, p.reset)
+	w.buf.WriteString("\n")
+	for _, reason := range reasonsFor(r, c.Unit, c.Count) {
+		fmt.Fprintf(&w.buf, "%s  %s%s%s\n", indent, p.reason, reason, p.reset)
 	}
 }
 
-// reasonsFor looks the explanations up by full identifier rather than by the
-// printed label: two functions can each declare a case called "empty input", and
-// matching on the label alone would attach one function's reason to the other's
-// case, picked at random by map iteration order.
 func reasonsFor(r Report, unit string, count int) []string {
 	if OutcomeFor(count, r.Votes) == OutcomePass {
 		return nil
@@ -172,30 +153,42 @@ func reasonsFor(r Report, unit string, count int) []string {
 	return r.Reasons[unit]
 }
 
-func writeSummary(b *strings.Builder, p palette, r Report) {
-	passed, split, failed := 0, 0, 0
+type tally struct {
+	passed int
+	split  int
+	failed int
+}
+
+func tallyOf(r Report) tally {
+	var counted tally
 	for _, count := range r.Verdicts {
 		switch OutcomeFor(count, r.Votes) {
 		case OutcomePass:
-			passed++
+			counted.passed++
 		case OutcomeSplit:
-			split++
+			counted.split++
 		case OutcomeFail:
-			failed++
+			counted.failed++
 		default:
 			panic(fmt.Sprintf("unknown outcome for count %d", count))
 		}
 	}
+	return counted
+}
 
-	parts := []string{fmt.Sprintf("%s%d passed%s", p.pass, passed, p.reset)}
-	if failed+split > 0 {
-		parts = append(parts, fmt.Sprintf("%s%d failed%s", p.fail, failed+split, p.reset))
+func writeSummary(w *pen, r Report) {
+	p := w.colours
+	counted := tallyOf(r)
+
+	parts := []string{fmt.Sprintf("%s%d passed%s", p.pass, counted.passed, p.reset)}
+	if fell := counted.failed + counted.split; fell > 0 {
+		parts = append(parts, fmt.Sprintf("%s%d failed%s", p.fail, fell, p.reset))
 	}
-	if split > 0 {
-		parts = append(parts, fmt.Sprintf("%s%d split%s", p.split, split, p.reset))
+	if counted.split > 0 {
+		parts = append(parts, fmt.Sprintf("%s%d split%s", p.split, counted.split, p.reset))
 	}
 	parts = append(parts, fmt.Sprintf("%s%s, %s%s", p.dim, plural(len(r.Verdicts), "unit"), plural(r.Votes, "vote"), p.reset))
-	fmt.Fprintf(b, "  %s\n", strings.Join(parts, p.dim+"  ·  "+p.reset))
+	fmt.Fprintf(&w.buf, "  %s\n", strings.Join(parts, p.dim+"  ·  "+p.reset))
 }
 
 func plural(n int, singular string) string {
@@ -231,8 +224,6 @@ func colourOf(p palette, outcome Outcome) string {
 	}
 }
 
-// palette is empty for anything that is not a terminal, so a redirected run holds
-// the same bytes a person saw, without escape sequences through the middle of them.
 type palette struct {
 	pass   string
 	fail   string

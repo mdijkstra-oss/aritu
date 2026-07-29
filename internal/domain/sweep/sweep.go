@@ -12,7 +12,6 @@ import (
 	"github.com/matthijn/aritu/internal/lib/kind"
 )
 
-// Request is what a run knows before it knows which files it covers.
 type Request struct {
 	Patterns []string
 	Rules    []rule.Rule
@@ -21,15 +20,11 @@ type Request struct {
 	RulesDir string
 }
 
-// Resolved is the set of files a run covers and the test for whether a given
-// rule is about one of them.
 type Resolved struct {
 	Files      []string
 	IsTargeted func(rule.Rule, string) bool
 }
 
-// Resolve expands the request into the files to judge, failing when a named
-// file is one no enabled rule is about.
 func Resolve(req Request) (Resolved, error) {
 	resolved := Resolved{IsTargeted: targetingBy(req.Kinds, req.Dir)}
 
@@ -45,8 +40,6 @@ func Resolve(req Request) (Resolved, error) {
 	return resolved, checkEveryFileIsTargeted(files, req.Rules, resolved.IsTargeted)
 }
 
-// Kinds resolves the target kinds the config declares, rooted at the
-// repository the config points at.
 func Kinds(loaded config.Config, dir string) (kind.Set, error) {
 	return kind.Resolve(repositoryDir(loaded, dir), loaded.Targets)
 }

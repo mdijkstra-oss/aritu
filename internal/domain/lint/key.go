@@ -6,7 +6,6 @@ import (
 	"unicode"
 )
 
-// UnitsFor derives the key each enumerated identifier is answered under.
 func UnitsFor(names []string) []Unit {
 	units := make([]Unit, 0, len(names))
 	for at, name := range names {
@@ -15,16 +14,6 @@ func UnitsFor(names []string) []Unit {
 	return units
 }
 
-// keyFor derives the property a unit answers under: its position in the listed
-// units, then a normalised form of the name a reader can recognise.
-//
-// Uniqueness rides entirely on the position, which is what lets the readable half
-// be cut to fit the API's ceiling. Cutting a readable key on its own is the wrong
-// answer twice over: the prefix that survives is neither unique — two files under
-// one long directory reduce to the same string — nor legible, and dropping a unit's
-// own property would hand it a neighbour's verdict with every count still looking
-// healthy. The tail is kept over the head because it is the half a reader
-// recognises: the file name, the case that failed.
 func keyFor(at int, name string) string {
 	prefix := fmt.Sprintf("u%02d", at+1)
 	readable := strings.Trim(lastChars(snakeCase(name), maxKeyLength-len(prefix)-1), "_")
@@ -47,11 +36,6 @@ func lastChars(text string, count int) string {
 	return text[len(text)-count:]
 }
 
-// snakeCase normalises a name for the key: anything outside the key's character
-// set collapses to a single underscore however much of it there was, and a word
-// break opens where a capital follows a lower-case letter or digit. Acronym-grade
-// word splitting is deliberately absent — the position prefix already guarantees
-// uniqueness, so the readable half only has to be recognisable.
 func snakeCase(text string) string {
 	var b strings.Builder
 	pendingSeparator := false
