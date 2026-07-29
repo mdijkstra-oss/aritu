@@ -44,11 +44,13 @@ covers, decide from the goals.
    those apart, and drop a file re-entering the queue unchanged without a
    judge-run. This is what makes the run finite.
 
-5. **Keep state a crash could resume from.** One worklist file in the repo
-   root — shape is yours, but it holds the queue, the verdicts, and the
-   skip/rule-issue notes. Write it as things happen; it outranks your memory
-   on resume, is never committed, and is deleted at the end after reporting
-   what it held: done, skipped, rule-issues.
+5. **Keep state a crash could resume from.** One worklist file at
+   `.aritu/worklist.md` — shape is yours, but it holds the queue, the verdicts,
+   and the skip/rule-issue notes. Write it as things happen; it outranks your
+   memory on resume, is never committed, and is deleted at the end after
+   reporting what it held: done, skipped, rule-issues. `.aritu/` is where this
+   tool keeps its own gitignored per-checkout state; delete the worklist, not
+   the directory, and leave anything else in there alone.
 
 6. **Know when a file is beating you.** A few failed attempts on the same file
    means the fix oscillates or the rule is confused: roll back to the last
