@@ -2,6 +2,7 @@ package sweep
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -174,6 +175,39 @@ func TestFilesForWithExclusions(t *testing.T) {
 			t.Errorf("filesFor() = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestFilesForLeavesOutWhatGitIgnores(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".gitignore"), "generated/\n")
+	writeFile(t, filepath.Join(root, "alpha_test.go"), testFileBody)
+	writeFile(t, filepath.Join(root, "generated", "beta_test.go"), testFileBody)
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}} {
+		command := exec.Command("git", args...)
+		command.Dir = root
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+
+	kinds, err := kind.Resolve(root, nil)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	got, err := filesFor(nil, derivedSweep{
+		kinds:    kinds,
+		targeted: []string{"tests"},
+		dir:      root,
+		rulesDir: filepath.Join(root, "rules"),
+	})
+
+	if err != nil {
+		t.Fatalf("filesFor() error = %v, want none", err)
+	}
+	if want := []string{filepath.Join(root, "alpha_test.go")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("filesFor() = %q, want %q", got, want)
+	}
 }
 
 func TestCheckEveryFileIsTargeted(t *testing.T) {

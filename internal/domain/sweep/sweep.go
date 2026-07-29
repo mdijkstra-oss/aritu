@@ -8,6 +8,7 @@ import (
 
 	"github.com/matthijn/aritu/internal/domain/config"
 	"github.com/matthijn/aritu/internal/domain/rule"
+	"github.com/matthijn/aritu/internal/lib/gitignore"
 	"github.com/matthijn/aritu/internal/lib/glob"
 	"github.com/matthijn/aritu/internal/lib/kind"
 )
@@ -33,6 +34,7 @@ func Resolve(req Request) (Resolved, error) {
 		kinds:    req.Kinds,
 		targeted: targetedKindsOf(req.Rules),
 		excluded: req.Excluded,
+		dir:      req.Dir,
 		rulesDir: req.RulesDir,
 	})
 	if err != nil {
@@ -57,6 +59,7 @@ type derivedSweep struct {
 	kinds    kind.Set
 	targeted []string
 	excluded []string
+	dir      string
 	rulesDir string
 }
 
@@ -65,7 +68,10 @@ func (d derivedSweep) files() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := d.sweptFrom(found)
+	files, err := d.sweptFrom(found)
+	if err != nil {
+		return nil, err
+	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no targets: nothing here is %s, so name a file or glob pattern",
 			strings.Join(d.targeted, " or "))
@@ -73,20 +79,26 @@ func (d derivedSweep) files() ([]string, error) {
 	return files, nil
 }
 
-func (d derivedSweep) sweptFrom(files []string) []string {
+func (d derivedSweep) sweptFrom(files []string) ([]string, error) {
+	ignored, err := gitignore.Ignored(d.dir, files)
+	if err != nil {
+		return nil, err
+	}
+
 	swept := make([]string, 0, len(files))
 	for _, file := range files {
-		if d.isSwept(file) {
+		if d.isSwept(file, ignored) {
 			swept = append(swept, file)
 		}
 	}
-	return swept
+	return swept, nil
 }
 
 // The rules directory is excluded whether or not the repository said so: what
 // sits there is rule material rather than the work being judged.
-func (d derivedSweep) isSwept(file string) bool {
-	return !isUnder(d.rulesDir, file) && !glob.MatchesAny(d.excluded, file)
+func (d derivedSweep) isSwept(file string, ignored map[string]struct{}) bool {
+	_, isIgnored := ignored[file]
+	return !isUnder(d.rulesDir, file) && !glob.MatchesAny(d.excluded, file) && !isIgnored
 }
 
 func isUnder(dir, path string) bool {

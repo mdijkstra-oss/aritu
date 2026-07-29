@@ -304,8 +304,15 @@ worse than one that refuses to load.
 
 ### Excluding files
 
-`exclude` is what the derived sweep must not reach — vendored trees, generated
-code, a directory you have decided not to fight about yet:
+**Your `.gitignore` is respected already**, by asking git rather than by reading
+it: one `git check-ignore` over the sweep, so nested ignore files,
+`.git/info/exclude`, your global ignore file and git's own precedence rules all
+hold, and there is nothing here to drift from them. Outside a git repository, or
+on a machine with no git, nothing is ignored and the run carries on.
+
+Note what that leaves: git does not ignore what it is **tracking**, so committed
+generated code is still swept. That is the gap `exclude` fills — vendored trees,
+generated code you check in, a directory you have decided not to fight about yet:
 
 ```yaml
 exclude:
@@ -325,9 +332,10 @@ One pattern language is worth more than the shorthand a second one buys. Write
 A pattern that does not parse fails the load naming itself, like any other bad
 key.
 
-**It bounds what is derived, not what you ask for.** `aritu apply` with no
-arguments leaves excluded files out; `aritu apply internal/api/client.gen.go`
-judges it. This is the rule the rules directory and a parked rule already follow —
+**All three bound what is derived, not what you ask for.** `aritu apply` with no
+arguments leaves excluded and git-ignored files out; `aritu apply
+internal/api/client.gen.go` judges it either way. This is the rule the rules
+directory and a parked rule already follow —
 what was derived respects the boundary, what was asked for overrules it — and it
 is what keeps `aritu apply $(git diff --name-only)` meaning exactly what you typed.
 
