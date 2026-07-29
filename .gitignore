@@ -20,3 +20,7 @@
 # worktree; the worktree checkouts and per-machine permissions do not.
 .claude/worktrees/
 .claude/settings.local.json
+
+# Scratch state for a review run, deleted when it finishes. Ignored so a
+# staging sweep partway through cannot commit it.
+/.aritu-worklist.md
