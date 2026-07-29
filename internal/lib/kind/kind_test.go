@@ -56,6 +56,17 @@ func TestCovers(t *testing.T) {
 			want:    true,
 		},
 		{
+			name:    "and plain text, which carries prose without announcing it",
+			targets: []string{"docs"},
+			path:    "/repo/NOTES.txt",
+			want:    true,
+		},
+		{
+			name:    "plain text is not code, so a rule about names never sees it",
+			targets: []string{"code"},
+			path:    "/repo/NOTES.txt",
+		},
+		{
 			name:    "code covers an implementation file",
 			targets: []string{"code"},
 			path:    "/repo/internal/parser.go",
@@ -68,9 +79,20 @@ func TestCovers(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "an extension no ecosystem in the table uses is neither",
-			targets: []string{"tests", "code"},
+			name:    "code covers a language with no test convention, because a rule about names still applies",
+			targets: []string{"code"},
 			path:    "/repo/script.rb",
+			want:    true,
+		},
+		{
+			name:    "and tests does not, having no way to recognise one",
+			targets: []string{"tests"},
+			path:    "/repo/script_test.rb",
+		},
+		{
+			name:    "an extension the table does not list is neither",
+			targets: []string{"tests", "code"},
+			path:    "/repo/legacy/report.rnd",
 		},
 		{
 			name:    "a rule about several kinds takes any one of them",

@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/matthijn/aritu/internal/lib/glob"
+	"github.com/matthijn/aritu/internal/lib/language"
 	"github.com/matthijn/aritu/internal/lib/testpath"
 )
 
@@ -59,15 +60,14 @@ func (s Set) Expand(names []string) ([]string, error) {
 
 var builtins = []Kind{
 	{Name: "tests", Patterns: sourcePatterns, Covers: testpath.IsTestFile},
-	{Name: "code", Patterns: sourcePatterns, Covers: isSourceFile},
+	{Name: "code", Patterns: sourcePatterns, Covers: language.IsSourceFile},
 	{Name: "docs", Patterns: docPatterns, Covers: isDocFile},
 }
 
 var (
-	sourceExtensions = testpath.Extensions()
-	docExtensions    = []string{".md", ".mdx"}
+	docExtensions = []string{".md", ".mdx", ".txt"}
 
-	sourcePatterns = patternsFor(sourceExtensions)
+	sourcePatterns = patternsFor(language.Extensions())
 	docPatterns    = patternsFor(docExtensions)
 )
 
@@ -97,12 +97,8 @@ func patternsFor(extensions []string) []string {
 	return patterns
 }
 
-func isSourceFile(path string) bool { return hasExtensionIn(sourceExtensions, path) }
-
-func isDocFile(path string) bool { return hasExtensionIn(docExtensions, path) }
-
-func hasExtensionIn(extensions []string, path string) bool {
-	return slices.Contains(extensions, filepath.Ext(path))
+func isDocFile(path string) bool {
+	return slices.Contains(docExtensions, filepath.Ext(path))
 }
 
 func allRooted(base string, patterns []string) []string {

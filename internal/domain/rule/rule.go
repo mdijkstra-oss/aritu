@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/matthijn/aritu/internal/lib/language"
 	"github.com/matthijn/aritu/internal/lib/testpath"
 )
 
@@ -319,7 +320,7 @@ func findFixtureFile(dir string) (string, error) {
 	tests := make([]string, 0, 1)
 	sources := make([]string, 0, 1)
 	for _, entry := range entries {
-		if entry.IsDir() || !isSourceFile(entry.Name()) {
+		if entry.IsDir() || !language.IsSourceFile(entry.Name()) {
 			continue
 		}
 		if testpath.IsTestFile(entry.Name()) {
@@ -337,9 +338,6 @@ func findFixtureFile(dir string) (string, error) {
 	return "", fmt.Errorf("fixture %s: want exactly one test file, or exactly one source file and no test file, found %d test and %d source files", dir, len(tests), len(sources))
 }
 
-func isSourceFile(name string) bool {
-	return slices.Contains(testpath.Extensions(), filepath.Ext(name))
-}
 
 type frontmatter struct {
 	IncludeSource bool     `yaml:"include_source"`
