@@ -1,5 +1,7 @@
 # aritu
 
+<p style="color: red;">Not sure if this is the path to go down to. May abandon this.</p>
+
 An LLM linter. Give it a rule written in prose and a file; it asks a model whether
 each unit of the file satisfies the rule, several times over, and reports how many
 runs agreed. Run it in CI or a pre-commit hook to enforce what no parser can check:
