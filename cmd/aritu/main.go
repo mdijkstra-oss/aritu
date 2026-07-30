@@ -136,7 +136,7 @@ type command func(ctx context.Context, resolved settings, out streams) lint.Exit
 
 type judged func(ctx context.Context, resolved settings, ask service.Ask, out streams) lint.Exit
 
-func judging(body judged) command {
+func judging(body judged, gate func(service.Ask) service.Ask) command {
 	return func(ctx context.Context, resolved settings, out streams) lint.Exit {
 		if resolved.Debug {
 			return body(ctx, resolved, debug.New(out.stderr), out)
@@ -146,13 +146,16 @@ func judging(body judged) command {
 			fmt.Fprintf(out.stderr, "aritu: %v\n", err)
 			return lint.ExitError
 		}
+		if gate != nil {
+			ask = gate(ask)
+		}
 		return body(ctx, resolved, ask, out)
 	}
 }
 
 var commands = map[string]command{
-	"apply":    refusingInOwnTree(judging(runApply)),
-	"selftest": judging(runSelftest),
+	"apply":    judging(runApply, refusingVerdictsInOwnTree),
+	"selftest": judging(runSelftest, nil),
 	"rulebook": runRulebook,
 }
 

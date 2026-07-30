@@ -9,7 +9,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/matthijn/aritu/internal/domain/lint"
 	"github.com/matthijn/aritu/internal/lib/service"
 )
 
@@ -73,7 +72,7 @@ type verdict struct {
 }
 
 func isSplitterCall(req service.Request) bool {
-	return string(req.Schema) == lint.NamesSchema
+	return req.Kind == service.Split
 }
 
 func callNameFor(req service.Request) string {

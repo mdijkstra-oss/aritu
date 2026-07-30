@@ -19,7 +19,15 @@ type Request struct {
 	Model  string
 	Effort string
 	Schema json.RawMessage
+	Kind   Kind
 }
+
+type Kind int
+
+const (
+	Verdict Kind = iota
+	Split
+)
 
 type Ask func(ctx context.Context, req Request) (json.RawMessage, error)
 

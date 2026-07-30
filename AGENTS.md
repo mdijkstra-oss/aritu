@@ -5,16 +5,29 @@ Run `make rulebook` before doing everything else. These rules you must follow an
 
 ## Running aritu while changing aritu
 
-No one cooks in the kitchen they are still building.
+The line is drawn at one call, not at the command. In this tree, `apply` cannot
+ask the model for a verdict: judging this tree with a binary you are halfway
+through rewriting reports on a moving target, and its findings pull the work
+towards cleaning the codebase and away from the change you were asked to make.
 
-`selftest` is the only run allowed. It judges the fixtures under `rules/` and
-`prompts/`, which is what a change to a rule or a prompt has to be measured
-against, and it touches no file you are editing.
+Everything else runs. `apply` sweeps, loads rules, enumerates units against the
+model and fills its caches, then refuses at the verdict call and reports why,
+per file. That is deliberate: the machinery under this rewrite only runs over a
+real tree, and running it is how you find out whether it works.
 
-`apply` is not, and neither is the `aritu-review` skill that drives it. Judging
-this tree with a binary you are halfway through rewriting reports on a moving
-target, and its findings pull the work towards cleaning the codebase and away
-from the change you were asked to make.
+`selftest` is untouched and judges as normal. Its fixtures under `rules/` and
+`prompts/` are what a change to a rule or a prompt has to be measured against,
+and they are not the files you are editing.
+
+`--debug` is untouched too: it fabricates every reply locally, so it prints both
+prompts here and calls nothing.
+
+The `aritu-review` skill is still not a run to make here: it exists to act on
+findings, and it will collect refusals.
+
+The one thing this costs: `apply` pointed at a fixture under `rules/` is refused
+along with everything else, because the refusal is per call and not per file.
+Judging a fixture is what `selftest` is for.
 
 A change to the Go code is verified by `go build ./...` and `go test ./...`.
 `make rulebook` is fine at any time: it calls no model.

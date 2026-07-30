@@ -207,6 +207,7 @@ func askNames(ctx context.Context, ask service.Ask, opts Options, file SourceFil
 		Model:  opts.Model,
 		Effort: opts.Effort,
 		Schema: json.RawMessage(NamesSchema),
+		Kind:   service.Split,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing the units in %s: %w", file.Path, err)
@@ -257,6 +258,7 @@ func askBatch(ctx context.Context, ask service.Ask, cast ballot) (map[string]ver
 		Model:  opts.Model,
 		Effort: opts.Effort,
 		Schema: VerdictSchemaFor(cast.units),
+		Kind:   service.Verdict,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("judging %s against rule %s: %w", opts.File, opts.Rule.Name, err)
