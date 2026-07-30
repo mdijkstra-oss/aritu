@@ -1,6 +1,7 @@
 # aritu
 
-<p style="color: red;">Not sure if this is the path to go down to. May abandon this.</p>
+> [!CAUTION]
+> Not sure if this is the path to go down. May abandon this.
 
 An LLM linter. Give it a rule written in prose and a file; it asks a model whether
 each unit of the file satisfies the rule, several times over, and reports how many
