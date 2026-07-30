@@ -151,7 +151,7 @@ func judging(body judged) command {
 }
 
 var commands = map[string]command{
-	"apply":    judging(runApply),
+	"apply":    refusingInOwnTree(judging(runApply)),
 	"selftest": judging(runSelftest),
 	"rulebook": runRulebook,
 }
